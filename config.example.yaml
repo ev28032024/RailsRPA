@@ -78,7 +78,7 @@ settings:
   max_workers: 1                      # Количество параллельных потоков
                                       # 1 = последовательный режим
                                       # 2-3 = безопасный параллельный
-                                      # 4-10 = быстрый (⚠️ риск rate-limiting)
+                                      # 4-10 = быстрый
   
   # ========== TIMEOUTS (seconds) ==========
   page_load_timeout: 45               # Загрузка страницы
@@ -100,4 +100,5 @@ settings:
   # ========== LOGGING ==========
   log_file: "./automation.log"
   log_level: "INFO"                   # DEBUG, INFO, WARNING, ERROR
+
 
