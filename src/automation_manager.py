@@ -338,6 +338,8 @@ class AutomationManager:
             logger.debug(f"WebSocket endpoint: {ws_endpoint}")
             
             # Connect to browser via Playwright
+            result = {'status': 'FAILED', 'message': 'Unknown error'}
+            
             with sync_playwright() as p:
                 try:
                     logger.info("Connecting to browser...")
@@ -347,111 +349,125 @@ class AutomationManager:
                     contexts = browser.contexts
                     if not contexts:
                         logger.error("No browser contexts found")
-                        return {'status': 'FAILED', 'message': "No browser contexts found"}
-                    
-                    context = contexts[0]
-                    pages = context.pages
-                    
-                    # Use existing page or create new one
-                    if pages:
-                        page = pages[0]
+                        result = {'status': 'FAILED', 'message': "No browser contexts found"}
                     else:
-                        page = context.new_page()
-                    
-                    logger.info("Connected to browser successfully")
-                    
-                    # Create Discord automation instance
-                    timeouts = {
-                        'page_load_timeout': self.config.get_timeout('page_load_timeout', 30),
-                        'auth_check_timeout': self.config.get_timeout('auth_check_timeout', 10),
-                        'upload_timeout': self.config.get_timeout('upload_timeout', 15)
-                    }
-                    
-                    discord = DiscordAutomation(page, timeouts)
-                    
-                    # Step 1: Check authentication
-                    logger.info("Step 1: Checking Discord authentication...")
-                    is_authenticated, auth_message = discord.check_authentication()
-                    
-                    if not is_authenticated:
-                        logger.warning(f"❌ {auth_message}")
-                        return {'status': 'NOT_AUTHENTICATED', 'message': auth_message}
-                    
-                    logger.info(f"✓ {auth_message}")
-                    
-                    # Step 2: Verify username (if expected username is provided)
-                    # Check global setting first, then Google Sheets specific setting
-                    verify_enabled = self.config.settings.get('verify_username', True)
-                    if self.use_google_sheets:
-                        verify_enabled = self.config.settings.get('google_sheets', {}).get('verify_username', verify_enabled)
-                    
-                    if expected_username and verify_enabled:
-                        logger.info(f"Step 2: Verifying Discord username...")
-                        username_match, actual_username, verify_message = discord.verify_username(expected_username)
+                        context = contexts[0]
+                        pages = context.pages
                         
-                        if not username_match:
-                            logger.warning(f"❌ {verify_message}")
-                            return {
-                                'status': 'USERNAME_MISMATCH',
-                                'message': verify_message,
-                                'expected_username': expected_username,
-                                'actual_username': actual_username
-                            }
+                        # Use existing page or create new one
+                        if pages:
+                            page = pages[0]
+                        else:
+                            page = context.new_page()
                         
-                        logger.info(f"✓ {verify_message}")
-                    
-                    # Step 3: Navigate to channel
-                    logger.info("Step 3: Navigating to Discord channel...")
-                    channel_url = self.config.get_discord_url()
-                    nav_success, nav_message = discord.navigate_to_channel(channel_url)
-                    
-                    if not nav_success:
-                        logger.error(f"❌ {nav_message}")
-                        # Check if it's a channel access issue
-                        if "access" in nav_message.lower() or "unavailable" in nav_message.lower():
-                            return {'status': 'CHANNEL_UNAVAILABLE', 'message': nav_message}
-                        return {'status': 'FAILED', 'message': nav_message}
-                    
-                    logger.info(f"✓ {nav_message}")
-                    
-                    # Step 4: Upload and send image
-                    logger.info("Step 4: Uploading and sending image...")
-                    upload_success, upload_message = discord.upload_and_send_image(image_path)
-                    
-                    if not upload_success:
-                        logger.error(f"❌ {upload_message}")
-                        return {'status': 'FAILED', 'message': upload_message}
-                    
-                    logger.info(f"✓ {upload_message}")
-                    
-                    # Success!
-                    logger.info("✅ Profile processed successfully!")
-                    return {'status': 'SUCCESS', 'message': "Image sent successfully"}
+                        logger.info("Connected to browser successfully")
+                        
+                        # Create Discord automation instance
+                        timeouts = {
+                            'page_load_timeout': self.config.get_timeout('page_load_timeout', 30),
+                            'auth_check_timeout': self.config.get_timeout('auth_check_timeout', 10),
+                            'upload_timeout': self.config.get_timeout('upload_timeout', 15)
+                        }
+                        
+                        discord = DiscordAutomation(page, timeouts)
+                        
+                        # Step 1: Check authentication
+                        logger.info("Step 1: Checking Discord authentication...")
+                        is_authenticated, auth_message = discord.check_authentication()
+                        
+                        if not is_authenticated:
+                            logger.warning(f"❌ {auth_message}")
+                            result = {'status': 'NOT_AUTHENTICATED', 'message': auth_message}
+                        else:
+                            logger.info(f"✓ {auth_message}")
+                            
+                            # Step 2: Verify username (if expected username is provided)
+                            # Check global setting first, then Google Sheets specific setting
+                            verify_enabled = self.config.settings.get('verify_username', True)
+                            if self.use_google_sheets:
+                                verify_enabled = self.config.settings.get('google_sheets', {}).get('verify_username', verify_enabled)
+                            
+                            step_failed = False
+                            
+                            if expected_username and verify_enabled:
+                                logger.info(f"Step 2: Verifying Discord username...")
+                                username_match, actual_username, verify_message = discord.verify_username(expected_username)
+                                
+                                if not username_match:
+                                    logger.warning(f"❌ {verify_message}")
+                                    result = {
+                                        'status': 'USERNAME_MISMATCH',
+                                        'message': verify_message,
+                                        'expected_username': expected_username,
+                                        'actual_username': actual_username
+                                    }
+                                    step_failed = True
+                                else:
+                                    logger.info(f"✓ {verify_message}")
+                            
+                            if not step_failed:
+                                # Step 3: Navigate to channel
+                                logger.info("Step 3: Navigating to Discord channel...")
+                                channel_url = self.config.get_discord_url()
+                                nav_success, nav_message = discord.navigate_to_channel(channel_url)
+                                
+                                if not nav_success:
+                                    logger.error(f"❌ {nav_message}")
+                                    # Check if it's a channel access issue
+                                    if "access" in nav_message.lower() or "unavailable" in nav_message.lower():
+                                        result = {'status': 'CHANNEL_UNAVAILABLE', 'message': nav_message}
+                                    else:
+                                        result = {'status': 'FAILED', 'message': nav_message}
+                                    step_failed = True
+                                else:
+                                    logger.info(f"✓ {nav_message}")
+                            
+                            if not step_failed:
+                                # Step 4: Upload and send image
+                                logger.info("Step 4: Uploading and sending image...")
+                                upload_success, upload_message = discord.upload_and_send_image(image_path)
+                                
+                                if not upload_success:
+                                    logger.error(f"❌ {upload_message}")
+                                    result = {'status': 'FAILED', 'message': upload_message}
+                                else:
+                                    logger.info(f"✓ {upload_message}")
+                                    
+                                    # Success!
+                                    logger.info("✅ Profile processed successfully!")
+                                    result = {'status': 'SUCCESS', 'message': "Image sent successfully"}
                     
                 except Exception as e:
                     logger.error(f"Browser automation error: {e}", exc_info=True)
-                    return {'status': 'FAILED', 'message': f"Automation error: {str(e)}"}
+                    result = {'status': 'FAILED', 'message': f"Automation error: {str(e)}"}
+                
                 finally:
-                    # Disconnect from browser but don't close it
+                    # IMPORTANT: Clean up Playwright resources BEFORE closing AdsPower
+                    # This prevents "Task was destroyed but it is pending" errors
                     if browser:
                         try:
+                            # Small delay to let async tasks complete
+                            time.sleep(0.5)
                             browser.close()
-                        except:
-                            pass
+                            time.sleep(0.3)
+                        except Exception as e:
+                            logger.debug(f"Browser close note: {e}")
+                    
+                    # Close AdsPower profile INSIDE the playwright context
+                    # This ensures clean shutdown order
+                    try:
+                        logger.info("Closing AdsPower profile...")
+                        if profile_id or serial_number:
+                            self.adspower.close_profile(profile_id=profile_id, serial_number=serial_number)
+                            time.sleep(0.5)
+                    except Exception as e:
+                        logger.warning(f"Error closing AdsPower profile: {e}")
+            
+            return result
             
         except Exception as e:
             logger.error(f"Unexpected error processing profile: {e}", exc_info=True)
             return {'status': 'FAILED', 'message': f"Unexpected error: {str(e)}"}
-        
-        finally:
-            # Close AdsPower profile
-            try:
-                logger.info("Closing AdsPower profile...")
-                if profile_id or serial_number:
-                    self.adspower.close_profile(profile_id=profile_id, serial_number=serial_number)
-                    time.sleep(1)
-            except Exception as e:
-                logger.warning(f"Error closing AdsPower profile: {e}")
     
     def _notify_user(self, profile_id: str, status: str, message: str):
         """

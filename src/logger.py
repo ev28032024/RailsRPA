@@ -86,6 +86,10 @@ def setup_logging(log_file: Optional[str] = None, log_level: str = "INFO"):
     logging.getLogger('patchright').setLevel(logging.WARNING)
     logging.getLogger('urllib3').setLevel(logging.WARNING)
     logging.getLogger('requests').setLevel(logging.WARNING)
+    
+    # Suppress asyncio errors that occur during browser cleanup
+    # These are harmless warnings about tasks being destroyed
+    logging.getLogger('asyncio').setLevel(logging.CRITICAL)
 
 
 def print_banner():
