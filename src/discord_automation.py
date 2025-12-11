@@ -542,4 +542,3 @@ class DiscordAutomation:
                 self.page.close()
         except Exception as e:
             logger.debug(f"Error closing page: {e}")
-
