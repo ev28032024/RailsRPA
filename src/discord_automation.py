@@ -125,6 +125,105 @@ class DiscordAutomation:
         
         return None
     
+    def _check_channel_access(self) -> Tuple[bool, str]:
+        """
+        Check if the channel is accessible (no access errors)
+        
+        Returns:
+            Tuple of (is_accessible, error_message)
+        """
+        try:
+            # Error indicators that Discord shows for inaccessible channels
+            error_selectors = [
+                # No access to channel
+                'div:has-text("You don\'t have access")',
+                'div:has-text("У вас нет доступа")',
+                'div:has-text("No tienes acceso")',
+                
+                # Channel not found / doesn't exist
+                'div:has-text("This channel doesn\'t exist")',
+                'div:has-text("Этот канал не существует")',
+                
+                # Server errors
+                'div:has-text("This server is unavailable")',
+                'div:has-text("Сервер недоступен")',
+                
+                # Banned from server
+                'div:has-text("You\'ve been banned")',
+                'div:has-text("Вы были забанены")',
+                
+                # No permission to view
+                'div:has-text("You do not have permission")',
+                'div:has-text("У вас нет прав")',
+                'div:has-text("Missing Access")',
+                
+                # Generic error page elements
+                'div[class*="errorPage"]',
+                'div[class*="notFound"]',
+                'div[class*="noAccess"]',
+                'h1:has-text("404")',
+                'div:has-text("NOT FOUND")'
+            ]
+            
+            # Quick check for error elements
+            for selector in error_selectors:
+                try:
+                    error_element = self.page.locator(selector).first
+                    if error_element.count() > 0 and error_element.is_visible(timeout=1000):
+                        # Get the error text
+                        try:
+                            error_text = error_element.text_content(timeout=2000)
+                            logger.warning(f"Channel access error detected: {error_text[:100]}")
+                            return False, f"Channel unavailable: {error_text[:100]}"
+                        except:
+                            return False, "Channel is not accessible on this profile"
+                except:
+                    continue
+            
+            # Check if we're on a valid channel page by looking at URL
+            current_url = self.page.url
+            
+            # If redirected to home or login
+            if '/channels/@me' in current_url and '/channels/' in current_url:
+                # Redirected to DMs - server/channel not accessible
+                if current_url.endswith('@me'):
+                    logger.warning("Redirected to DMs - channel not accessible")
+                    return False, "Channel not accessible - redirected to DMs"
+            
+            # Check for invite-only or restricted channel modal
+            restricted_selectors = [
+                'div[class*="modal"]:has-text("This channel is restricted")',
+                'div[class*="modal"]:has-text("NSFW")',
+                'div[class*="modal"]:has-text("age-restricted")',
+                'button:has-text("I understand")',  # Age verification
+                'button:has-text("Я понимаю")'
+            ]
+            
+            for selector in restricted_selectors:
+                try:
+                    modal = self.page.locator(selector).first
+                    if modal.count() > 0 and modal.is_visible(timeout=1000):
+                        logger.warning("Restricted channel modal detected")
+                        # Try to click through if it's an age gate
+                        try:
+                            confirm_btn = self.page.locator('button:has-text("I understand"), button:has-text("Continue")').first
+                            if confirm_btn.is_visible(timeout=1000):
+                                confirm_btn.click()
+                                time.sleep(1)
+                                logger.info("Clicked through age restriction modal")
+                        except:
+                            pass
+                except:
+                    continue
+            
+            # No errors found - channel is accessible
+            return True, "Channel is accessible"
+            
+        except Exception as e:
+            logger.debug(f"Error checking channel access: {e}")
+            # If we can't check, assume it's accessible and let other checks handle it
+            return True, "Access check completed"
+    
     def _retry_action(self, action_func, max_retries: int = 3, delay: float = 2.0):
         """
         Retry an action multiple times on failure
@@ -283,6 +382,14 @@ class DiscordAutomation:
             except:
                 pass
             
+            # Check for channel access errors FIRST
+            logger.debug("Checking for channel access errors...")
+            channel_accessible, access_message = self._check_channel_access()
+            
+            if not channel_accessible:
+                logger.error(f"Channel access error: {access_message}")
+                return False, access_message
+            
             # Wait for channel to be ready - look for key elements
             logger.debug("Waiting for channel elements to load...")
             channel_indicators = [
@@ -298,6 +405,11 @@ class DiscordAutomation:
             found_indicator = self._wait_for_element(channel_indicators, timeout=15000, visible=True)
             
             if not found_indicator:
+                # Double-check for access errors
+                channel_accessible, access_message = self._check_channel_access()
+                if not channel_accessible:
+                    return False, access_message
+                    
                 logger.error("Channel elements not found after waiting")
                 return False, "Channel did not load - elements not found"
             
