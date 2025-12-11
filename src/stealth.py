@@ -368,4 +368,3 @@ def get_random_viewport() -> dict:
     ]
     
     return random.choice(viewports)
-
