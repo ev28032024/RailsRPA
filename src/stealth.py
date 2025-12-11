@@ -161,6 +161,11 @@ class StealthManager:
             width = viewport['width']
             height = viewport['height']
             
+            # Ensure viewport is large enough for safe random movements
+            if width < 200 or height < 200:
+                logger.debug(f"Viewport too small for random movements: {width}x{height}")
+                return
+            
             # Random movements (2-4 moves)
             num_moves = random.randint(2, 4)
             
@@ -212,19 +217,25 @@ class StealthManager:
             if move_mouse:
                 # Get element position
                 box = element.bounding_box()
-                if box:
-                    # Ensure we don't go outside element bounds
-                    min_x = max(5, 0)
-                    max_x = max(box['width'] - 5, min_x + 1)
-                    min_y = max(5, 0)
-                    max_y = max(box['height'] - 5, min_y + 1)
+                if box and box['width'] > 0 and box['height'] > 0:
+                    # Calculate safe click area within element bounds
+                    # Use 20% margin from edges, minimum 2px
+                    margin_x = max(2, box['width'] * 0.2)
+                    margin_y = max(2, box['height'] * 0.2)
                     
-                    # Move to random point within element
-                    x = box['x'] + random.uniform(min_x, max_x)
-                    y = box['y'] + random.uniform(min_y, max_y)
+                    # Ensure we have valid range (for very small elements)
+                    if box['width'] > margin_x * 2:
+                        click_x = box['x'] + random.uniform(margin_x, box['width'] - margin_x)
+                    else:
+                        click_x = box['x'] + box['width'] / 2
+                    
+                    if box['height'] > margin_y * 2:
+                        click_y = box['y'] + random.uniform(margin_y, box['height'] - margin_y)
+                    else:
+                        click_y = box['y'] + box['height'] / 2
                     
                     # Move mouse
-                    self.page.mouse.move(x, y)
+                    self.page.mouse.move(click_x, click_y)
                     self.random_delay(0.1, 0.3)
             
             # Small delay before click
@@ -368,3 +379,4 @@ def get_random_viewport() -> dict:
     ]
     
     return random.choice(viewports)
+

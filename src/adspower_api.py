@@ -229,3 +229,4 @@ class AdsPowerAPI:
             logger.warning(f"Error formatting endpoint '{endpoint}': {e}")
             # Return original if formatting fails
             return endpoint
+

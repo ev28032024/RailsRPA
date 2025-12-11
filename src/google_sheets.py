@@ -5,6 +5,7 @@ Manages profile configuration and status logging via Google Sheets
 
 import logging
 import os
+import threading
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 
@@ -76,6 +77,9 @@ class GoogleSheetsManager:
         self.client = None
         self.spreadsheet = None
         self.worksheet = None
+        
+        # Thread lock for safe concurrent access
+        self._lock = threading.Lock()
         
         if self.enabled:
             self._connect()
@@ -182,7 +186,7 @@ class GoogleSheetsManager:
     
     def update_status(self, row_number: int, status: str, message: str = ""):
         """
-        Update status for a profile in Google Sheets
+        Update status for a profile in Google Sheets (thread-safe)
         
         Args:
             row_number: Row number in the spreadsheet (1-based)
@@ -192,34 +196,35 @@ class GoogleSheetsManager:
         if not self.worksheet:
             return
         
-        try:
-            # Status column
-            status_col = self.columns.get('status', 'D')
-            status_cell = f"{status_col}{row_number}"
-            
-            # Update status
-            self.worksheet.update_acell(status_cell, status)
-            logger.debug(f"Updated status at {status_cell}: {status}")
-            
-            # Update timestamp if enabled
-            if self.log_timestamp and 'timestamp' in self.columns:
-                timestamp_col = self.columns.get('timestamp', 'E')
-                timestamp_cell = f"{timestamp_col}{row_number}"
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                self.worksheet.update_acell(timestamp_cell, timestamp)
-            
-            # Update message if enabled
-            if self.log_message and message and 'message' in self.columns:
-                message_col = self.columns.get('message', 'F')
-                message_cell = f"{message_col}{row_number}"
-                self.worksheet.update_acell(message_cell, message[:100])  # Limit message length
+        with self._lock:
+            try:
+                # Status column
+                status_col = self.columns.get('status', 'D')
+                status_cell = f"{status_col}{row_number}"
                 
-        except Exception as e:
-            logger.error(f"Failed to update status in Google Sheets: {e}")
+                # Update status
+                self.worksheet.update_acell(status_cell, status)
+                logger.debug(f"Updated status at {status_cell}: {status}")
+                
+                # Update timestamp if enabled
+                if self.log_timestamp and 'timestamp' in self.columns:
+                    timestamp_col = self.columns.get('timestamp', 'E')
+                    timestamp_cell = f"{timestamp_col}{row_number}"
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    self.worksheet.update_acell(timestamp_cell, timestamp)
+                
+                # Update message if enabled
+                if self.log_message and message and 'message' in self.columns:
+                    message_col = self.columns.get('message', 'F')
+                    message_cell = f"{message_col}{row_number}"
+                    self.worksheet.update_acell(message_cell, message[:100])  # Limit message length
+                    
+            except Exception as e:
+                logger.error(f"Failed to update status in Google Sheets: {e}")
     
     def batch_update_status(self, updates: List[Dict]):
         """
-        Batch update multiple statuses (more efficient)
+        Batch update multiple statuses (more efficient, thread-safe)
         
         Args:
             updates: List of dicts with 'row_number', 'status', 'message' keys
@@ -227,44 +232,45 @@ class GoogleSheetsManager:
         if not self.worksheet or not updates:
             return
         
-        try:
-            batch_updates = []
-            
-            for update in updates:
-                row = update['row_number']
-                status = update.get('status', '')
-                message = update.get('message', '')
+        with self._lock:
+            try:
+                batch_updates = []
                 
-                # Status
-                status_col = self.columns.get('status', 'D')
-                batch_updates.append({
-                    'range': f"{status_col}{row}",
-                    'values': [[status]]
-                })
-                
-                # Timestamp
-                if self.log_timestamp and 'timestamp' in self.columns:
-                    timestamp_col = self.columns.get('timestamp', 'E')
-                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                for update in updates:
+                    row = update['row_number']
+                    status = update.get('status', '')
+                    message = update.get('message', '')
+                    
+                    # Status
+                    status_col = self.columns.get('status', 'D')
                     batch_updates.append({
-                        'range': f"{timestamp_col}{row}",
-                        'values': [[timestamp]]
+                        'range': f"{status_col}{row}",
+                        'values': [[status]]
                     })
+                    
+                    # Timestamp
+                    if self.log_timestamp and 'timestamp' in self.columns:
+                        timestamp_col = self.columns.get('timestamp', 'E')
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        batch_updates.append({
+                            'range': f"{timestamp_col}{row}",
+                            'values': [[timestamp]]
+                        })
+                    
+                    # Message
+                    if self.log_message and message and 'message' in self.columns:
+                        message_col = self.columns.get('message', 'F')
+                        batch_updates.append({
+                            'range': f"{message_col}{row}",
+                            'values': [[message[:100]]]
+                        })
                 
-                # Message
-                if self.log_message and message and 'message' in self.columns:
-                    message_col = self.columns.get('message', 'F')
-                    batch_updates.append({
-                        'range': f"{message_col}{row}",
-                        'values': [[message[:100]]]
-                    })
-            
-            # Perform batch update
-            self.worksheet.batch_update(batch_updates)
-            logger.debug(f"Batch updated {len(updates)} rows")
-            
-        except Exception as e:
-            logger.error(f"Failed to batch update Google Sheets: {e}")
+                # Perform batch update
+                self.worksheet.batch_update(batch_updates)
+                logger.debug(f"Batch updated {len(updates)} rows")
+                
+            except Exception as e:
+                logger.error(f"Failed to batch update Google Sheets: {e}")
     
     def set_in_progress(self, row_number: int):
         """Mark profile as in progress"""
@@ -321,3 +327,4 @@ def check_gspread_available() -> Tuple[bool, str]:
         return True, "gspread is available"
     else:
         return False, "gspread not installed. Run: pip install gspread google-auth google-auth-oauthlib"
+

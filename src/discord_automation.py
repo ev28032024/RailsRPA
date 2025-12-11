@@ -297,12 +297,10 @@ class DiscordAutomation:
             # Check if we're on a valid channel page by looking at URL
             current_url = self.page.url
             
-            # If redirected to home or login
-            if '/channels/@me' in current_url and '/channels/' in current_url:
-                # Redirected to DMs - server/channel not accessible
-                if current_url.endswith('@me'):
-                    logger.warning("Redirected to DMs - channel not accessible")
-                    return False, "Channel not accessible - redirected to DMs"
+            # If redirected to DMs (home) - server/channel not accessible
+            if current_url.endswith('/channels/@me') or current_url.endswith('/channels/@me/'):
+                logger.warning("Redirected to DMs - channel not accessible")
+                return False, "Channel not accessible - redirected to DMs"
             
             # Check for invite-only or restricted channel modal
             restricted_selectors = [
@@ -768,3 +766,4 @@ class DiscordAutomation:
                 self.page.close()
         except Exception as e:
             logger.debug(f"Error closing page: {e}")
+

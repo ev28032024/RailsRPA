@@ -87,7 +87,17 @@ def setup_logging(log_file: Optional[str] = None, log_level: str = "INFO"):
     logging.getLogger('urllib3').setLevel(logging.WARNING)
     logging.getLogger('requests').setLevel(logging.WARNING)
 
+
 def print_banner():
     """Print application banner"""
-    banner = f"""Automated Discord Image Sender"""
+    banner = f"""
+{Fore.CYAN}╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║         {Fore.WHITE}AdsPower Discord Automation RPA{Fore.CYAN}                    ║
+║                                                              ║
+║         {Fore.YELLOW}Automated Discord Image Sender{Fore.CYAN}                     ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝{Style.RESET_ALL}
+"""
     print(banner)
+

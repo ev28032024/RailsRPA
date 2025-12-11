@@ -49,11 +49,17 @@ class ConfigManager:
             self.profiles = self.config.get('profiles', [])
             self.settings = self.config.get('settings', {})
             
-            if not self.profiles:
-                logger.error("No profiles defined in configuration")
+            # Check if Google Sheets is enabled - if so, profiles can be empty
+            google_sheets_enabled = self.settings.get('google_sheets', {}).get('enabled', False)
+            
+            if not self.profiles and not google_sheets_enabled:
+                logger.error("No profiles defined in configuration (and Google Sheets is not enabled)")
                 return False
             
-            logger.info(f"Loaded {len(self.profiles)} profiles from configuration")
+            if self.profiles:
+                logger.info(f"Loaded {len(self.profiles)} profiles from configuration")
+            elif google_sheets_enabled:
+                logger.info("Using Google Sheets for profile management")
             
             # Validate configuration
             if not self._validate():
@@ -76,21 +82,25 @@ class ConfigManager:
             True if valid, False otherwise
         """
         try:
-            # Validate profiles
-            for idx, profile in enumerate(self.profiles):
-                if 'profile_id' not in profile:
-                    logger.error(f"Profile at index {idx} missing 'profile_id'")
-                    return False
-                
-                if 'image_name' not in profile:
-                    logger.error(f"Profile {profile.get('profile_id')} missing 'image_name'")
-                    return False
+            # Check if Google Sheets is enabled
+            google_sheets_enabled = self.settings.get('google_sheets', {}).get('enabled', False)
             
-            # Check for duplicate profile IDs
-            profile_ids = [p['profile_id'] for p in self.profiles]
-            if len(profile_ids) != len(set(profile_ids)):
-                logger.error("Duplicate profile IDs found in configuration")
-                return False
+            # Validate profiles (only if not using Google Sheets exclusively)
+            if self.profiles:
+                for idx, profile in enumerate(self.profiles):
+                    if 'profile_id' not in profile:
+                        logger.error(f"Profile at index {idx} missing 'profile_id'")
+                        return False
+                    
+                    if 'image_name' not in profile:
+                        logger.error(f"Profile {profile.get('profile_id')} missing 'image_name'")
+                        return False
+                
+                # Check for duplicate profile IDs
+                profile_ids = [p['profile_id'] for p in self.profiles]
+                if len(profile_ids) != len(set(profile_ids)):
+                    logger.error("Duplicate profile IDs found in configuration")
+                    return False
             
             # Validate required settings
             required_settings = ['adspower_api_host', 'discord_channel_url', 'images_dir']
@@ -104,6 +114,13 @@ class ConfigManager:
             if not os.path.exists(images_dir):
                 logger.error(f"Images directory does not exist: {images_dir}")
                 return False
+            
+            # Validate Google Sheets config if enabled
+            if google_sheets_enabled:
+                gs_config = self.settings.get('google_sheets', {})
+                if not gs_config.get('spreadsheet_id'):
+                    logger.error("Google Sheets enabled but 'spreadsheet_id' is not set")
+                    return False
             
             return True
             
@@ -198,3 +215,4 @@ class ConfigManager:
     def get_log_level(self) -> str:
         """Get log level"""
         return self.settings.get('log_level', 'INFO')
+

@@ -235,8 +235,12 @@ class AutomationManager:
             total=total
         )
     
-    def _handle_result(self, profile_id: str, result: Dict, row_number: int = 0):
+    def _handle_result(self, profile_id: str, result: Optional[Dict], row_number: int = 0):
         """Handle processing result and update statistics"""
+        # Guard against None result
+        if result is None:
+            result = {'status': 'FAILED', 'message': 'Unknown error (no result returned)'}
+        
         status = result.get('status', 'FAILED')
         message = result.get('message', 'Unknown error')
         
