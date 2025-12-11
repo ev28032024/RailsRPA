@@ -50,10 +50,10 @@ patchright install chromium
 
 ```bash
 # Скопировать пример конфигурации
-copy config.example.yaml config.yaml
+cp config.example.yaml config.yaml
 
 # Отредактировать config.yaml
-notepad config.yaml
+nano | vim config.yaml
 ```
 
 ## ⚙️ Конфигурация
@@ -257,4 +257,5 @@ INFO | Processing profile 1/10: abc123
 2024-12-11 10:30:46 | INFO     | src.adspower_api | Starting AdsPower profile: abc123
 ```
 ---
+
 
