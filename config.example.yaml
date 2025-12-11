@@ -8,18 +8,21 @@
 # или если Google Sheets не настроен
 
 profiles:
-  # Profile ID from AdsPower: Image filename (without extension)
+  # Profile ID from AdsPower: Image filename + optional username verification
   - profile_id: "abc123"
     image_name: "image23767"
+    username: "cooluser"      # Ожидаемый никнейм Discord (опционально)
     enabled: true
   
   - profile_id: "def456"
     image_name: "image23768"
+    username: "testuser"      # Если никнейм не совпадёт - профиль будет пропущен
     enabled: true
   
   - profile_id: "ghi789"
     image_name: "image23769"
-    enabled: false  # Skip this profile
+    username: ""              # Пустой = проверка отключена для этого профиля
+    enabled: false            # Skip this profile
 
 # ============================================================
 # РЕЖИМ 2: Google Sheets (рекомендуется для больших объемов)
@@ -82,6 +85,12 @@ settings:
   auth_check_timeout: 15              # Проверка авторизации
   upload_timeout: 20                  # Загрузка изображения
   between_profiles_delay: 3           # Задержка между профилями (только в sequential режиме)
+  
+  # ========== USERNAME VERIFICATION ==========
+  # Работает в обоих режимах: config.yaml и Google Sheets
+  verify_username: true               # Проверять никнейм Discord (true/false)
+                                      # Если true - сравнивает username из профиля с реальным
+                                      # Если username пустой - проверка пропускается
   
   # ========== STEALTH MODE ==========
   stealth_mode: true                  # Маскировка автоматизации
