@@ -1,6 +1,6 @@
 """
 Automation Manager Module
-Orchestrates the entire automation workflow with multi-threading support
+Orchestrates the entire automation workflow with multi-threading and Google Sheets support
 """
 
 import logging
@@ -22,9 +22,16 @@ from src.discord_automation import DiscordAutomation
 
 logger = logging.getLogger(__name__)
 
+# Try to import Google Sheets manager
+try:
+    from src.google_sheets import GoogleSheetsManager, GSPREAD_AVAILABLE
+except ImportError:
+    GSPREAD_AVAILABLE = False
+    GoogleSheetsManager = None
+
 
 class AutomationManager:
-    """Main automation orchestrator with multi-threading support"""
+    """Main automation orchestrator with multi-threading and Google Sheets support"""
     
     def __init__(self, config: ConfigManager):
         """
@@ -44,17 +51,46 @@ class AutomationManager:
             'failed': 0,
             'skipped': 0,
             'not_authenticated': 0,
-            'channel_unavailable': 0
+            'channel_unavailable': 0,
+            'username_mismatch': 0
         }
         
         # Multi-threading settings
         self.max_workers = config.settings.get('max_workers', 1)
         self.use_threading = self.max_workers > 1
         
+        # Google Sheets integration
+        self.google_sheets = None
+        self.use_google_sheets = False
+        self._init_google_sheets()
+        
         if self.use_threading:
             logger.info(f"🧵 Multi-threading enabled: {self.max_workers} workers")
         else:
             logger.info("Sequential mode (single-threaded)")
+    
+    def _init_google_sheets(self):
+        """Initialize Google Sheets integration if configured"""
+        gs_config = self.config.settings.get('google_sheets', {})
+        
+        if not gs_config.get('enabled', False):
+            logger.debug("Google Sheets integration disabled")
+            return
+        
+        if not GSPREAD_AVAILABLE:
+            logger.warning("⚠️ Google Sheets enabled but gspread not installed")
+            logger.warning("   Run: pip install gspread google-auth google-auth-oauthlib")
+            return
+        
+        try:
+            self.google_sheets = GoogleSheetsManager(gs_config)
+            if self.google_sheets.is_enabled():
+                self.use_google_sheets = True
+                logger.info(f"📊 Google Sheets integration enabled")
+                logger.info(f"   Spreadsheet: {self.google_sheets.get_spreadsheet_url()}")
+        except Exception as e:
+            logger.error(f"Failed to initialize Google Sheets: {e}")
+            self.google_sheets = None
     
     def _update_stats(self, key: str, value: int = 1):
         """Thread-safe statistics update"""
@@ -63,16 +99,30 @@ class AutomationManager:
     
     def run(self):
         """Run the automation for all enabled profiles"""
-        profiles = self.config.get_enabled_profiles()
+        # Get profiles from Google Sheets or config file
+        if self.use_google_sheets:
+            profiles = self.google_sheets.get_profiles()
+            source = "Google Sheets"
+        else:
+            profiles = self.config.get_enabled_profiles()
+            source = "config.yaml"
+        
         total_profiles = len(profiles)
+        
+        if total_profiles == 0:
+            logger.warning("No profiles to process!")
+            return
         
         logger.info(f"Starting automation for {total_profiles} profiles")
         print(f"\n{'='*60}")
         print(f"Total profiles to process: {total_profiles}")
+        print(f"Source: {source}")
         if self.use_threading:
             print(f"Mode: Multi-threaded ({self.max_workers} workers)")
         else:
             print(f"Mode: Sequential (single-threaded)")
+        if self.use_google_sheets:
+            print(f"📊 Google Sheets logging: ENABLED")
         print(f"{'='*60}\n")
         
         if self.use_threading:
@@ -90,17 +140,32 @@ class AutomationManager:
         for idx, profile in enumerate(profiles, 1):
             profile_id = profile['profile_id']
             image_name = profile['image_name']
+            expected_username = profile.get('username', '')
+            row_number = profile.get('row_number', 0)
             
             logger.info(f"\n{'='*60}")
             logger.info(f"Processing profile {idx}/{total_profiles}: {profile_id}")
+            if expected_username:
+                logger.info(f"Expected username: {expected_username}")
             logger.info(f"{'='*60}")
             
             self._update_stats('total')
             
-            # Process the profile
-            result = self._process_profile(profile_id, image_name, idx, total_profiles)
+            # Mark as in progress in Google Sheets
+            if self.use_google_sheets and row_number:
+                self.google_sheets.set_in_progress(row_number)
             
-            self._handle_result(profile_id, result)
+            # Process the profile
+            result = self._process_profile(
+                profile_id=profile_id,
+                image_name=image_name,
+                expected_username=expected_username,
+                row_number=row_number,
+                idx=idx,
+                total=total_profiles
+            )
+            
+            self._handle_result(profile_id, result, row_number)
             
             # Delay between profiles
             if idx < total_profiles:
@@ -113,70 +178,117 @@ class AutomationManager:
         """Run profiles in parallel using ThreadPoolExecutor"""
         total_profiles = len(profiles)
         
-        # Create profile tasks with index
-        tasks = [(profile, idx, total_profiles) for idx, profile in enumerate(profiles, 1)]
-        
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # Submit all tasks
-            future_to_profile = {
-                executor.submit(
-                    self._process_profile_wrapper, 
-                    task[0]['profile_id'], 
-                    task[0]['image_name'],
-                    task[1],
-                    task[2]
-                ): task[0] 
-                for task in tasks
-            }
+            future_to_profile = {}
+            
+            for idx, profile in enumerate(profiles, 1):
+                future = executor.submit(
+                    self._process_profile_wrapper,
+                    profile=profile,
+                    idx=idx,
+                    total=total_profiles
+                )
+                future_to_profile[future] = profile
             
             # Process completed tasks
             for future in as_completed(future_to_profile):
                 profile = future_to_profile[future]
                 profile_id = profile['profile_id']
+                row_number = profile.get('row_number', 0)
                 
                 try:
                     result = future.result()
-                    self._handle_result(profile_id, result)
+                    self._handle_result(profile_id, result, row_number)
                 except Exception as e:
                     logger.error(f"Thread error for profile {profile_id}: {e}")
                     self._update_stats('failed')
                     self._notify_user(profile_id, "FAILED", f"Thread error: {str(e)}")
+                    if self.use_google_sheets and row_number:
+                        self.google_sheets.set_failed(row_number, f"Thread error: {str(e)}")
     
-    def _process_profile_wrapper(self, profile_id: str, image_name: str, idx: int, total: int) -> Dict:
+    def _process_profile_wrapper(self, profile: Dict, idx: int, total: int) -> Dict:
         """Wrapper for thread execution"""
+        profile_id = profile['profile_id']
+        image_name = profile['image_name']
+        expected_username = profile.get('username', '')
+        row_number = profile.get('row_number', 0)
+        
         self._update_stats('total')
         
         logger.info(f"\n{'='*60}")
         logger.info(f"[Thread] Processing profile {idx}/{total}: {profile_id}")
+        if expected_username:
+            logger.info(f"Expected username: {expected_username}")
         logger.info(f"{'='*60}")
         
-        return self._process_profile(profile_id, image_name, idx, total)
+        # Mark as in progress in Google Sheets
+        if self.use_google_sheets and row_number:
+            self.google_sheets.set_in_progress(row_number)
+        
+        return self._process_profile(
+            profile_id=profile_id,
+            image_name=image_name,
+            expected_username=expected_username,
+            row_number=row_number,
+            idx=idx,
+            total=total
+        )
     
-    def _handle_result(self, profile_id: str, result: Dict):
+    def _handle_result(self, profile_id: str, result: Dict, row_number: int = 0):
         """Handle processing result and update statistics"""
         status = result.get('status', 'FAILED')
         message = result.get('message', 'Unknown error')
         
         if status == 'SUCCESS':
             self._update_stats('successful')
+            if self.use_google_sheets and row_number:
+                self.google_sheets.set_success(row_number, message)
+                
         elif status == 'NOT_AUTHENTICATED':
             self._update_stats('not_authenticated')
             self._update_stats('failed')
+            if self.use_google_sheets and row_number:
+                self.google_sheets.set_not_authenticated(row_number, message)
+                
         elif status == 'CHANNEL_UNAVAILABLE':
             self._update_stats('channel_unavailable')
             self._update_stats('failed')
+            if self.use_google_sheets and row_number:
+                self.google_sheets.set_channel_unavailable(row_number, message)
+                
+        elif status == 'USERNAME_MISMATCH':
+            self._update_stats('username_mismatch')
+            self._update_stats('failed')
+            if self.use_google_sheets and row_number:
+                expected = result.get('expected_username', '')
+                actual = result.get('actual_username', '')
+                self.google_sheets.set_username_mismatch(row_number, expected, actual)
+                
         else:
             self._update_stats('failed')
+            if self.use_google_sheets and row_number:
+                self.google_sheets.set_failed(row_number, message)
         
         self._notify_user(profile_id, status, message)
     
-    def _process_profile(self, profile_id: str, image_name: str, idx: int = 0, total: int = 0) -> Dict:
+    def _process_profile(
+        self,
+        profile_id: str,
+        image_name: str,
+        expected_username: str = "",
+        row_number: int = 0,
+        idx: int = 0,
+        total: int = 0
+    ) -> Dict:
         """
         Process a single profile
         
         Args:
             profile_id: AdsPower profile ID
             image_name: Image filename to send
+            expected_username: Expected Discord username (for verification)
+            row_number: Row number in Google Sheets (0 if not using)
             idx: Current profile index
             total: Total profiles count
             
@@ -248,8 +360,24 @@ class AutomationManager:
                     
                     logger.info(f"✓ {auth_message}")
                     
-                    # Step 2: Navigate to channel
-                    logger.info("Step 2: Navigating to Discord channel...")
+                    # Step 2: Verify username (if expected username is provided)
+                    if expected_username and self.config.settings.get('google_sheets', {}).get('verify_username', True):
+                        logger.info(f"Step 2: Verifying Discord username...")
+                        username_match, actual_username, verify_message = discord.verify_username(expected_username)
+                        
+                        if not username_match:
+                            logger.warning(f"❌ {verify_message}")
+                            return {
+                                'status': 'USERNAME_MISMATCH',
+                                'message': verify_message,
+                                'expected_username': expected_username,
+                                'actual_username': actual_username
+                            }
+                        
+                        logger.info(f"✓ {verify_message}")
+                    
+                    # Step 3: Navigate to channel
+                    logger.info("Step 3: Navigating to Discord channel...")
                     channel_url = self.config.get_discord_url()
                     nav_success, nav_message = discord.navigate_to_channel(channel_url)
                     
@@ -262,8 +390,8 @@ class AutomationManager:
                     
                     logger.info(f"✓ {nav_message}")
                     
-                    # Step 3: Upload and send image
-                    logger.info("Step 3: Uploading and sending image...")
+                    # Step 4: Upload and send image
+                    logger.info("Step 4: Uploading and sending image...")
                     upload_success, upload_message = discord.upload_and_send_image(image_path)
                     
                     if not upload_success:
@@ -315,6 +443,7 @@ class AutomationManager:
             'FAILED': '\033[91m',            # Red
             'NOT_AUTHENTICATED': '\033[93m', # Yellow
             'CHANNEL_UNAVAILABLE': '\033[95m', # Magenta
+            'USERNAME_MISMATCH': '\033[96m', # Cyan
             'SKIPPED': '\033[94m'            # Blue
         }
         
@@ -339,10 +468,17 @@ class AutomationManager:
         print(f"❌ Failed:                  {self.stats['failed']}")
         print(f"⚠️  Not authenticated:      {self.stats['not_authenticated']}")
         print(f"🚫 Channel unavailable:     {self.stats['channel_unavailable']}")
+        print(f"❓ Username mismatch:       {self.stats['username_mismatch']}")
         print(f"{'='*60}\n")
         
         success_rate = 0
         if self.stats['total'] > 0:
             success_rate = (self.stats['successful'] / self.stats['total']) * 100
         
-        print(f"Success rate: {success_rate:.1f}%\n")
+        print(f"Success rate: {success_rate:.1f}%")
+        
+        if self.use_google_sheets:
+            print(f"\n📊 Results logged to Google Sheets")
+            print(f"   {self.google_sheets.get_spreadsheet_url()}")
+        
+        print()
