@@ -88,18 +88,29 @@ class ConfigManager:
             # Validate profiles (only if not using Google Sheets exclusively)
             if self.profiles:
                 for idx, profile in enumerate(self.profiles):
-                    if 'profile_id' not in profile:
-                        logger.error(f"Profile at index {idx} missing 'profile_id'")
+                    # Must have either profile_id or serial_number
+                    has_profile_id = 'profile_id' in profile and profile['profile_id']
+                    has_serial_number = 'serial_number' in profile and profile['serial_number'] is not None
+                    
+                    if not has_profile_id and not has_serial_number:
+                        logger.error(f"Profile at index {idx} missing both 'profile_id' and 'serial_number'")
                         return False
                     
                     if 'image_name' not in profile:
-                        logger.error(f"Profile {profile.get('profile_id')} missing 'image_name'")
+                        identifier = profile.get('profile_id') or f"serial #{profile.get('serial_number')}"
+                        logger.error(f"Profile {identifier} missing 'image_name'")
                         return False
                 
                 # Check for duplicate profile IDs
-                profile_ids = [p['profile_id'] for p in self.profiles]
+                profile_ids = [p.get('profile_id') for p in self.profiles if p.get('profile_id')]
                 if len(profile_ids) != len(set(profile_ids)):
                     logger.error("Duplicate profile IDs found in configuration")
+                    return False
+                
+                # Check for duplicate serial numbers
+                serial_numbers = [p.get('serial_number') for p in self.profiles if p.get('serial_number') is not None]
+                if len(serial_numbers) != len(set(serial_numbers)):
+                    logger.error("Duplicate serial numbers found in configuration")
                     return False
             
             # Validate required settings

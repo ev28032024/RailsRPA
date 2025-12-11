@@ -6,7 +6,7 @@ Orchestrates the entire automation workflow with multi-threading and Google Shee
 import logging
 import time
 import threading
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
@@ -138,13 +138,17 @@ class AutomationManager:
         total_profiles = len(profiles)
         
         for idx, profile in enumerate(profiles, 1):
-            profile_id = profile['profile_id']
+            profile_id = profile.get('profile_id', '')
+            serial_number = profile.get('serial_number')
             image_name = profile['image_name']
             expected_username = profile.get('username', '')
             row_number = profile.get('row_number', 0)
             
+            # Get identifier for logging
+            identifier = f"serial #{serial_number}" if serial_number else profile_id
+            
             logger.info(f"\n{'='*60}")
-            logger.info(f"Processing profile {idx}/{total_profiles}: {profile_id}")
+            logger.info(f"Processing profile {idx}/{total_profiles}: {identifier}")
             if expected_username:
                 logger.info(f"Expected username: {expected_username}")
             logger.info(f"{'='*60}")
@@ -158,6 +162,7 @@ class AutomationManager:
             # Process the profile
             result = self._process_profile(
                 profile_id=profile_id,
+                serial_number=serial_number,
                 image_name=image_name,
                 expected_username=expected_username,
                 row_number=row_number,
@@ -165,7 +170,7 @@ class AutomationManager:
                 total=total_profiles
             )
             
-            self._handle_result(profile_id, result, row_number)
+            self._handle_result(identifier, result, row_number)
             
             # Delay between profiles
             if idx < total_profiles:
@@ -194,30 +199,36 @@ class AutomationManager:
             # Process completed tasks
             for future in as_completed(future_to_profile):
                 profile = future_to_profile[future]
-                profile_id = profile['profile_id']
+                profile_id = profile.get('profile_id', '')
+                serial_number = profile.get('serial_number')
+                identifier = f"serial #{serial_number}" if serial_number else profile_id
                 row_number = profile.get('row_number', 0)
                 
                 try:
                     result = future.result()
-                    self._handle_result(profile_id, result, row_number)
+                    self._handle_result(identifier, result, row_number)
                 except Exception as e:
-                    logger.error(f"Thread error for profile {profile_id}: {e}")
+                    logger.error(f"Thread error for profile {identifier}: {e}")
                     self._update_stats('failed')
-                    self._notify_user(profile_id, "FAILED", f"Thread error: {str(e)}")
+                    self._notify_user(identifier, "FAILED", f"Thread error: {str(e)}")
                     if self.use_google_sheets and row_number:
                         self.google_sheets.set_failed(row_number, f"Thread error: {str(e)}")
     
     def _process_profile_wrapper(self, profile: Dict, idx: int, total: int) -> Dict:
         """Wrapper for thread execution"""
-        profile_id = profile['profile_id']
+        profile_id = profile.get('profile_id', '')
+        serial_number = profile.get('serial_number')
         image_name = profile['image_name']
         expected_username = profile.get('username', '')
         row_number = profile.get('row_number', 0)
         
+        # Get identifier for logging
+        identifier = f"serial #{serial_number}" if serial_number else profile_id
+        
         self._update_stats('total')
         
         logger.info(f"\n{'='*60}")
-        logger.info(f"[Thread] Processing profile {idx}/{total}: {profile_id}")
+        logger.info(f"[Thread] Processing profile {idx}/{total}: {identifier}")
         if expected_username:
             logger.info(f"Expected username: {expected_username}")
         logger.info(f"{'='*60}")
@@ -228,6 +239,7 @@ class AutomationManager:
         
         return self._process_profile(
             profile_id=profile_id,
+            serial_number=serial_number,
             image_name=image_name,
             expected_username=expected_username,
             row_number=row_number,
@@ -278,8 +290,9 @@ class AutomationManager:
     
     def _process_profile(
         self,
-        profile_id: str,
-        image_name: str,
+        profile_id: str = "",
+        serial_number: Optional[int] = None,
+        image_name: str = "",
         expected_username: str = "",
         row_number: int = 0,
         idx: int = 0,
@@ -289,7 +302,8 @@ class AutomationManager:
         Process a single profile
         
         Args:
-            profile_id: AdsPower profile ID
+            profile_id: AdsPower profile ID (e.g., 'i16to9p')
+            serial_number: Profile serial number (e.g., 27, 46)
             image_name: Image filename to send
             expected_username: Expected Discord username (for verification)
             row_number: Row number in Google Sheets (0 if not using)
@@ -300,6 +314,7 @@ class AutomationManager:
             Dict with 'status' and 'message' keys
         """
         browser = None
+        identifier = f"serial #{serial_number}" if serial_number else profile_id
         
         try:
             # Get image path
@@ -312,7 +327,7 @@ class AutomationManager:
             
             # Start AdsPower profile
             logger.info("Starting AdsPower profile...")
-            success, connection_info = self.adspower.start_profile(profile_id)
+            success, connection_info = self.adspower.start_profile(profile_id=profile_id, serial_number=serial_number)
             
             if not success or not connection_info:
                 logger.error(f"❌ Failed to start AdsPower profile")
@@ -432,8 +447,8 @@ class AutomationManager:
             # Close AdsPower profile
             try:
                 logger.info("Closing AdsPower profile...")
-                if profile_id:
-                    self.adspower.close_profile(profile_id)
+                if profile_id or serial_number:
+                    self.adspower.close_profile(profile_id=profile_id, serial_number=serial_number)
                     time.sleep(1)
             except Exception as e:
                 logger.warning(f"Error closing AdsPower profile: {e}")

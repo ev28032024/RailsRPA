@@ -1,11 +1,12 @@
 """
 AdsPower API Integration Module
 Handles communication with AdsPower API for profile management
+Supports both profile_id (user_id) and serial_number
 """
 
 import requests
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
@@ -24,29 +25,55 @@ class AdsPowerAPI:
         self.session = requests.Session()
         logger.info(f"AdsPower API initialized with host: {self.api_host}")
     
-    def start_profile(self, profile_id: str) -> Tuple[bool, Optional[Dict]]:
+    def _get_profile_params(self, profile_id: str = None, serial_number: Union[int, str] = None) -> Dict:
+        """
+        Get appropriate params for API call based on identifier type
+        
+        Args:
+            profile_id: AdsPower profile ID (e.g., 'i16to9p')
+            serial_number: Profile serial number (e.g., 27, 46)
+            
+        Returns:
+            Dict with appropriate parameter for API call
+        """
+        if serial_number is not None:
+            # Convert to string if int
+            return {"serial_number": str(serial_number)}
+        elif profile_id:
+            return {"user_id": profile_id}
+        else:
+            return {}
+    
+    def _get_identifier_str(self, profile_id: str = None, serial_number: Union[int, str] = None) -> str:
+        """Get human-readable identifier string for logging"""
+        if serial_number is not None:
+            return f"serial #{serial_number}"
+        return profile_id or "unknown"
+    
+    def start_profile(self, profile_id: str = None, serial_number: Union[int, str] = None) -> Tuple[bool, Optional[Dict]]:
         """
         Start an AdsPower profile and get WebDriver connection info
         
         Args:
-            profile_id: AdsPower profile ID
+            profile_id: AdsPower profile ID (e.g., 'i16to9p')
+            serial_number: Profile serial number (e.g., 27, 46)
             
         Returns:
             Tuple of (success, connection_info)
             connection_info contains 'ws_endpoint' and 'debug_port'
         """
-        if not profile_id:
-            logger.error("Profile ID is empty")
+        if not profile_id and serial_number is None:
+            logger.error("Either profile_id or serial_number must be provided")
             return False, None
+        
+        identifier = self._get_identifier_str(profile_id, serial_number)
             
         try:
             url = f"{self.api_host}/api/v1/browser/start"
-            params = {
-                "user_id": profile_id,
-                "open_tabs": "0"  # Don't open default tabs
-            }
+            params = self._get_profile_params(profile_id, serial_number)
+            params["open_tabs"] = "0"  # Don't open default tabs
             
-            logger.info(f"Starting AdsPower profile: {profile_id}")
+            logger.info(f"Starting AdsPower profile: {identifier}")
             response = self.session.get(url, params=params, timeout=30)
             response.raise_for_status()
             
@@ -55,7 +82,7 @@ class AdsPowerAPI:
             if data.get("code") == 0:
                 result = data.get("data", {})
                 if not result:
-                    logger.error(f"Empty data in response for profile {profile_id}")
+                    logger.error(f"Empty data in response for profile {identifier}")
                     logger.debug(f"Full response: {data}")
                     return False, None
                     
@@ -93,72 +120,76 @@ class AdsPowerAPI:
                     "webdriver": result.get("webdriver")
                 }
                 
-                logger.info(f"Profile {profile_id} started successfully")
+                logger.info(f"Profile {identifier} started successfully")
                 logger.debug(f"Connection info: {connection_info}")
                 return True, connection_info
             else:
                 error_msg = data.get("msg", "Unknown error")
-                logger.error(f"Failed to start profile {profile_id}: {error_msg}")
+                logger.error(f"Failed to start profile {identifier}: {error_msg}")
                 return False, None
                 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Network error while starting profile {profile_id}: {e}")
+            logger.error(f"Network error while starting profile {identifier}: {e}")
             return False, None
         except (ValueError, KeyError) as e:
-            logger.error(f"Invalid response format for profile {profile_id}: {e}")
+            logger.error(f"Invalid response format for profile {identifier}: {e}")
             return False, None
         except Exception as e:
-            logger.error(f"Unexpected error while starting profile {profile_id}: {e}")
+            logger.error(f"Unexpected error while starting profile {identifier}: {e}")
             return False, None
     
-    def close_profile(self, profile_id: str) -> bool:
+    def close_profile(self, profile_id: str = None, serial_number: Union[int, str] = None) -> bool:
         """
         Close an AdsPower profile
         
         Args:
-            profile_id: AdsPower profile ID
+            profile_id: AdsPower profile ID (e.g., 'i16to9p')
+            serial_number: Profile serial number (e.g., 27, 46)
             
         Returns:
             True if successful, False otherwise
         """
+        identifier = self._get_identifier_str(profile_id, serial_number)
+        
         try:
             url = f"{self.api_host}/api/v1/browser/stop"
-            params = {"user_id": profile_id}
+            params = self._get_profile_params(profile_id, serial_number)
             
-            logger.info(f"Closing AdsPower profile: {profile_id}")
+            logger.info(f"Closing AdsPower profile: {identifier}")
             response = self.session.get(url, params=params, timeout=10)
             response.raise_for_status()
             
             data = response.json()
             
             if data.get("code") == 0:
-                logger.info(f"Profile {profile_id} closed successfully")
+                logger.info(f"Profile {identifier} closed successfully")
                 return True
             else:
                 error_msg = data.get("msg", "Unknown error")
-                logger.warning(f"Failed to close profile {profile_id}: {error_msg}")
+                logger.warning(f"Failed to close profile {identifier}: {error_msg}")
                 return False
                 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Network error while closing profile {profile_id}: {e}")
+            logger.error(f"Network error while closing profile {identifier}: {e}")
             return False
         except Exception as e:
-            logger.error(f"Unexpected error while closing profile {profile_id}: {e}")
+            logger.error(f"Unexpected error while closing profile {identifier}: {e}")
             return False
     
-    def check_profile_status(self, profile_id: str) -> Optional[str]:
+    def check_profile_status(self, profile_id: str = None, serial_number: Union[int, str] = None) -> Optional[str]:
         """
         Check if a profile is running
         
         Args:
-            profile_id: AdsPower profile ID
+            profile_id: AdsPower profile ID (e.g., 'i16to9p')
+            serial_number: Profile serial number (e.g., 27, 46)
             
         Returns:
             'Active' if running, 'Inactive' if not, None on error
         """
         try:
             url = f"{self.api_host}/api/v1/browser/active"
-            params = {"user_id": profile_id}
+            params = self._get_profile_params(profile_id, serial_number)
             
             response = self.session.get(url, params=params, timeout=10)
             response.raise_for_status()
@@ -229,4 +260,3 @@ class AdsPowerAPI:
             logger.warning(f"Error formatting endpoint '{endpoint}': {e}")
             # Return original if formatting fails
             return endpoint
-

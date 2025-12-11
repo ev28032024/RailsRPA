@@ -32,12 +32,13 @@ class GoogleSheetsManager:
     
     # Default column mapping (can be customized in config)
     DEFAULT_COLUMNS = {
-        'profile_id': 'A',      # AdsPower Profile ID
-        'username': 'B',        # Discord username (for verification)
-        'image_name': 'C',      # Image filename (screen)
-        'status': 'D',          # Task status
-        'timestamp': 'E',       # Last update timestamp (optional)
-        'message': 'F'          # Status message (optional)
+        'profile_id': 'A',      # AdsPower Profile ID (e.g., i16to9p)
+        'serial_number': 'B',   # OR Profile serial number (e.g., 27, 46)
+        'username': 'C',        # Discord username (for verification)
+        'image_name': 'D',      # Image filename (screen)
+        'status': 'E',          # Task status
+        'timestamp': 'F',       # Last update timestamp (optional)
+        'message': 'G'          # Status message (optional)
     }
     
     # Status values
@@ -148,25 +149,35 @@ class GoogleSheetsManager:
             # Column indices (0-based)
             col_indices = {
                 'profile_id': self._col_to_index(self.columns.get('profile_id', 'A')),
-                'username': self._col_to_index(self.columns.get('username', 'B')),
-                'image_name': self._col_to_index(self.columns.get('image_name', 'C')),
-                'status': self._col_to_index(self.columns.get('status', 'D'))
+                'serial_number': self._col_to_index(self.columns.get('serial_number', 'B')) if 'serial_number' in self.columns else None,
+                'username': self._col_to_index(self.columns.get('username', 'C')),
+                'image_name': self._col_to_index(self.columns.get('image_name', 'D')),
+                'status': self._col_to_index(self.columns.get('status', 'E'))
             }
             
             # Parse rows starting from data_start_row (1-based, so -1 for index)
             for row_idx, row in enumerate(all_values[self.data_start_row - 1:], start=self.data_start_row):
                 try:
                     profile_id = row[col_indices['profile_id']] if len(row) > col_indices['profile_id'] else ''
+                    
+                    # Get serial_number if column is configured
+                    serial_number = None
+                    if col_indices['serial_number'] is not None:
+                        serial_str = row[col_indices['serial_number']] if len(row) > col_indices['serial_number'] else ''
+                        if serial_str.strip().isdigit():
+                            serial_number = int(serial_str.strip())
+                    
                     username = row[col_indices['username']] if len(row) > col_indices['username'] else ''
                     image_name = row[col_indices['image_name']] if len(row) > col_indices['image_name'] else ''
                     status = row[col_indices['status']] if len(row) > col_indices['status'] else ''
                     
-                    # Skip empty rows
-                    if not profile_id.strip():
+                    # Skip empty rows (must have either profile_id or serial_number)
+                    if not profile_id.strip() and serial_number is None:
                         continue
                     
                     profiles.append({
-                        'profile_id': profile_id.strip(),
+                        'profile_id': profile_id.strip() if profile_id else '',
+                        'serial_number': serial_number,
                         'username': username.strip(),
                         'image_name': image_name.strip(),
                         'current_status': status.strip(),
