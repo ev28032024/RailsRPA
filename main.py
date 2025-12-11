@@ -66,26 +66,27 @@ def _suppress_asyncio_errors():
         # Log other unexpected errors at debug level only
         logger.debug(f"Asyncio: {message}")
     
-    # Apply handler to existing or new event loop
+    # Apply handler to existing event loop (if any)
     try:
-        loop = asyncio.get_event_loop()
-        if not loop.is_closed():
-            loop.set_exception_handler(handle_exception)
+        # Use get_running_loop() for Python 3.10+ compatibility
+        # This won't create a new loop or show deprecation warning
+        loop = asyncio.get_running_loop()
+        loop.set_exception_handler(handle_exception)
     except RuntimeError:
-        # No event loop in current thread - that's fine
+        # No running event loop - that's expected at startup
         pass
     
-    # Also set policy for all future event loops
+    # Set policy for all future event loops
     try:
         policy = asyncio.get_event_loop_policy()
+        original_new_event_loop = policy.new_event_loop
         
-        class SilentEventLoopPolicy(type(policy)):
-            def new_event_loop(self):
-                loop = super().new_event_loop()
-                loop.set_exception_handler(handle_exception)
-                return loop
+        def patched_new_event_loop():
+            loop = original_new_event_loop()
+            loop.set_exception_handler(handle_exception)
+            return loop
         
-        asyncio.set_event_loop_policy(SilentEventLoopPolicy())
+        policy.new_event_loop = patched_new_event_loop
     except Exception:
         pass
 
