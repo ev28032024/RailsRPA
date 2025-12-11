@@ -198,4 +198,3 @@ class ConfigManager:
     def get_log_level(self) -> str:
         """Get log level"""
         return self.settings.get('log_level', 'INFO')
-
