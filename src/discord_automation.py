@@ -768,34 +768,47 @@ class DiscordAutomation:
             except Exception as e:
                 logger.debug(f"Modal check: {e}")
             
-            # Wait a bit more after modal closes
-            time.sleep(1.5)
+            # If no modal was found, assume it closed (or wasn't shown)
+            if not modal_closed:
+                # Check if we can find any modal currently
+                try:
+                    any_modal = self.page.locator('div[role="dialog"]').first
+                    if any_modal.count() == 0 or not any_modal.is_visible(timeout=500):
+                        modal_closed = True
+                        logger.debug("No visible modal - assuming closed")
+                except:
+                    modal_closed = True
             
-            # IMPORTANT: First check if message appeared in chat
-            # If message is there, it's SUCCESS regardless of slowmode appearing after
-            message_verified, verify_message = self._verify_message_sent()
+            # Wait a bit more after modal closes for message to appear
+            time.sleep(2.0)
             
-            if message_verified:
-                # Message found in chat = SUCCESS!
-                # Slowmode timer appearing AFTER send is normal, not an error
-                logger.info("✅ Image uploaded and verified in chat!")
-                return True, "Image sent and verified successfully"
+            # IMPORTANT: Try to verify message multiple times (message may take time to appear)
+            message_verified = False
+            verify_message = ""
             
-            # Message not found - NOW check for errors that may have blocked sending
+            for attempt in range(3):
+                message_verified, verify_message = self._verify_message_sent()
+                
+                if message_verified:
+                    # Message found in chat = SUCCESS!
+                    logger.info("✅ Image uploaded and verified in chat!")
+                    return True, "Image sent and verified successfully"
+                
+                if attempt < 2:
+                    logger.debug(f"Verification attempt {attempt + 1} failed, retrying...")
+                    time.sleep(1.5)
+            
+            # Message not found after retries - check for errors
             error_detected, error_message = self._check_send_errors()
             
             if error_detected:
-                # Check if this looks like a "post-send" slowmode (not blocking)
-                # If modal closed successfully, message likely sent before slowmode kicked in
-                if modal_closed and "slowmode" in error_message.lower():
-                    logger.info("Slowmode appeared after send - message likely delivered")
-                    logger.info("✅ Image upload completed (slowmode after send)")
-                    return True, "Image sent successfully (slowmode now active)"
-                
+                # Slowmode/error detected AND message not found = FAILED
+                # The modal closes regardless of success or failure
                 logger.error(f"❌ Discord error: {error_message}")
                 return False, error_message
             
-            # No errors but couldn't verify message
+            # No errors detected but couldn't verify message in chat
+            # This is inconclusive - might have sent but we can't confirm
             logger.warning(f"⚠️ Could not verify message delivery: {verify_message}")
             # Don't fail completely - message might have sent but verification failed
             logger.info("✅ Image upload completed (delivery unverified)")
@@ -1022,11 +1035,15 @@ class DiscordAutomation:
             return False
         
         try:
-            # Discord message list item selectors
+            # Discord message selectors based on actual HTML structure
             message_selectors = [
+                # Primary: data-list-item-id attribute (most reliable)
+                '[data-list-item-id*="chat-messages"]',
+                # Fallback: message class patterns
+                'div[class*="message__"][class*="cozyMessage"]',
+                'div[class*="message_"][class*="wrapper"]',
                 'li[class*="messageListItem"]',
-                'div[class*="message-"][id^="chat-messages"]',
-                '[data-list-item-id^="chat-messages"]'
+                '[role="article"][aria-roledescription="Message"]'
             ]
             
             for msg_selector in message_selectors:
@@ -1037,14 +1054,16 @@ class DiscordAutomation:
                     if count == 0:
                         continue
                     
-                    # Check last 5 messages (most recent)
-                    start_idx = max(0, count - 5)
+                    logger.debug(f"Found {count} messages with selector: {msg_selector}")
+                    
+                    # Check last 10 messages (most recent) for better coverage
+                    start_idx = max(0, count - 10)
                     
                     for i in range(count - 1, start_idx - 1, -1):
                         try:
                             msg = messages.nth(i)
                             
-                            if not msg.is_visible(timeout=500):
+                            if not msg.is_visible(timeout=300):
                                 continue
                             
                             # Get message author
@@ -1055,7 +1074,7 @@ class DiscordAutomation:
                             
                             author_lower = author.lower().strip()
                             
-                            # Check if author matches (substring match for flexibility)
+                            # Check if author matches (flexible matching)
                             author_matches = (
                                 username in author_lower or 
                                 author_lower in username or
@@ -1067,14 +1086,16 @@ class DiscordAutomation:
                                 has_image = self._message_has_image(msg)
                                 
                                 if has_image:
-                                    logger.debug(f"Found message with image from '{author}'")
+                                    logger.info(f"✓ Found message with image from '{author}'")
                                     return True
                                 else:
                                     logger.debug(f"Found message from '{author}' but no image")
                         except Exception as e:
                             logger.debug(f"Error checking message {i}: {e}")
                             continue
-                            
+                    
+                    # If we found messages but none matched, try next selector
+                    
                 except Exception as e:
                     logger.debug(f"Error with selector {msg_selector}: {e}")
                     continue
@@ -1096,11 +1117,27 @@ class DiscordAutomation:
             Author name or empty string
         """
         try:
-            # Author name selectors within a message
+            # Try data-text attribute first (most reliable in Discord)
+            try:
+                username_with_data = message_element.locator('span[class*="username"][data-text]').first
+                if username_with_data.count() > 0:
+                    data_text = username_with_data.get_attribute('data-text', timeout=300)
+                    if data_text and len(data_text) < 50:
+                        return data_text.strip()
+            except:
+                pass
+            
+            # Author name selectors within a message (based on actual Discord HTML)
             author_selectors = [
-                'span[class*="username"]',
-                'span[class*="headerText"] span',
+                # Primary: username span with class
+                'span[class*="username_"]',
+                'span[class*="username__"]',
+                # Header text
                 'h3[class*="header"] span[class*="username"]',
+                'span[class*="headerText"] span[class*="username"]',
+                # ID-based (message-username-*)
+                'span[id*="message-username"]',
+                # Fallback patterns
                 '[class*="userNameText"]',
                 '[class*="author"] span'
             ]
@@ -1109,7 +1146,7 @@ class DiscordAutomation:
                 try:
                     author_elem = message_element.locator(selector).first
                     if author_elem.count() > 0:
-                        text = author_elem.inner_text(timeout=500)
+                        text = author_elem.inner_text(timeout=300)
                         if text and len(text) < 50:  # Reasonable username length
                             return text.strip()
                 except:
@@ -1132,15 +1169,26 @@ class DiscordAutomation:
             True if message has image/attachment
         """
         try:
+            # Image selectors based on actual Discord HTML structure
             image_selectors = [
-                'img[class*="imageWrapper" i]',
-                'img[src*="cdn.discordapp.com/attachments"]',
-                'div[class*="imageWrapper"]',
-                'a[class*="imageWrapper"]',
+                # Primary: lazy loaded images (most common)
+                'img[class*="lazyImg"]',
+                # Image containers
+                'div[class*="imageContainer"]',
                 'div[class*="imageContent"]',
+                'div[class*="imageWrapper"]',
+                # Media containers
+                'div[class*="visualMediaItemContainer"]',
+                'div[class*="mediaAttachmentsContainer"]',
+                # CDN images
+                'img[src*="cdn.discordapp.com/attachments"]',
+                'img[src*="media.discordapp.net/attachments"]',
+                # Attachment containers
                 'div[class*="attachment"]',
-                '[class*="mediaAttachmentsContainer"]',
-                'img[class*="lazyImg"]'
+                'div[id*="message-accessories"]',
+                # Wrapper links
+                'a[class*="originalLink"]',
+                'div[class*="clickableWrapper"]'
             ]
             
             for selector in image_selectors:
