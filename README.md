@@ -28,7 +28,7 @@
 ### 1. Клонировать репозиторий
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/ev28032024/RailsRPA.git
 cd RailsRPA
 ```
 
@@ -257,3 +257,4 @@ INFO | Processing profile 1/10: abc123
 2024-12-11 10:30:46 | INFO     | src.adspower_api | Starting AdsPower profile: abc123
 ```
 ---
+
