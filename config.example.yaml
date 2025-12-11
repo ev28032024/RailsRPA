@@ -100,5 +100,3 @@ settings:
   # ========== LOGGING ==========
   log_file: "./automation.log"
   log_level: "INFO"                   # DEBUG, INFO, WARNING, ERROR
-
-
