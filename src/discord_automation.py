@@ -740,75 +740,40 @@ class DiscordAutomation:
                     logger.info("Pressed Enter (fallback)")
             
             # Step 5: Verify message was sent successfully
-            logger.info("Verifying message delivery...")
+            logger.info("Waiting for message to appear...")
             
-            # Wait for Discord to process
-            time.sleep(2.5)
+            # Wait for Discord to process and message to appear
+            time.sleep(3.0)
             
-            # Wait for upload modal to disappear (indicates processing started)
-            modal_closed = False
-            try:
-                modal_selectors = ['div[role="dialog"]', 'div[class*="uploadModal"]']
-                
-                for modal_selector in modal_selectors:
-                    modal = self.page.locator(modal_selector).first
-                    if modal.count() > 0:
-                        try:
-                            modal.wait_for(state="hidden", timeout=8000)
-                            modal_closed = True
-                            logger.debug("Upload modal closed")
-                            break
-                        except PlaywrightTimeout:
-                            logger.warning("Upload modal still visible after timeout")
-            except Exception as e:
-                logger.debug(f"Modal check: {e}")
+            # FIRST: Try to find our message in chat (most reliable check)
+            # If message is there = SUCCESS, regardless of any slowmode warning
+            logger.info("Looking for our message in chat...")
             
-            # If no modal was found, assume it closed (or wasn't shown)
-            if not modal_closed:
-                # Check if we can find any modal currently
-                try:
-                    any_modal = self.page.locator('div[role="dialog"]').first
-                    if any_modal.count() == 0 or not any_modal.is_visible(timeout=500):
-                        modal_closed = True
-                        logger.debug("No visible modal - assuming closed")
-                except:
-                    modal_closed = True
+            message_verified, verify_message = self._verify_message_sent()
             
-            # Wait a bit more after modal closes for message to appear
+            if message_verified:
+                logger.info("✅ Image uploaded and verified in chat!")
+                return True, "Image sent and verified successfully"
+            
+            # Message not found on first try - wait and try again
             time.sleep(2.0)
+            message_verified, verify_message = self._verify_message_sent()
             
-            # Check for errors FIRST (faster than searching messages)
-            logger.info("Checking for send errors...")
+            if message_verified:
+                logger.info("✅ Image uploaded and verified in chat!")
+                return True, "Image sent and verified successfully"
+            
+            # Message still not found - NOW check for errors
+            logger.info("Message not found, checking for errors...")
             error_detected, error_message = self._check_send_errors()
             
             if error_detected:
-                # Error detected = FAILED
                 logger.error(f"❌ Discord error: {error_message}")
                 return False, error_message
             
-            # No errors - try to verify message appeared (2 attempts max)
-            logger.info("No errors detected, verifying message in chat...")
-            message_verified = False
-            verify_message = ""
-            
-            for attempt in range(2):
-                message_verified, verify_message = self._verify_message_sent()
-                
-                if message_verified:
-                    logger.info("✅ Image uploaded and verified in chat!")
-                    return True, "Image sent and verified successfully"
-                
-                if attempt < 1:
-                    logger.debug(f"Verification attempt {attempt + 1}, retrying...")
-                    time.sleep(1.0)
-            
-            # No errors and modal closed = likely successful
-            if modal_closed:
-                logger.info("✅ No errors + modal closed = message likely sent")
-                return True, "Image sent successfully (no errors detected)"
-            
-            # Inconclusive
-            logger.warning(f"⚠️ Could not verify: {verify_message}")
+            # No message found, no errors - inconclusive but likely sent
+            logger.info("✅ No errors detected - message likely sent")
+            return True, "Image sent (no errors detected)"
             # Don't fail completely - message might have sent but verification failed
             logger.info("✅ Image upload completed (delivery unverified)")
             return True, "Image sent (delivery verification inconclusive)"
@@ -998,9 +963,6 @@ class DiscordAutomation:
         """
         Find message with image from specific user in last 5 messages
         """
-        if not username:
-            return False
-        
         try:
             # Get messages WITHIN chat container only
             messages = chat_container.locator('[data-list-item-id*="chat-messages"], [role="article"]')
@@ -1012,7 +974,7 @@ class DiscordAutomation:
             
             # Check ONLY last 5 messages (newest first)
             check_count = min(5, count)
-            logger.debug(f"Checking last {check_count} messages")
+            logger.debug(f"Found {count} messages, checking last {check_count}")
             
             for i in range(count - 1, count - check_count - 1, -1):
                 try:
@@ -1040,21 +1002,31 @@ class DiscordAutomation:
                         continue
                     
                     author_lower = author.lower().strip()
+                    logger.debug(f"Message {i}: author='{author}'")
                     
-                    # Check if author matches
-                    if username in author_lower or author_lower in username:
-                        # Check for image
-                        has_image = msg.locator('img[class*="lazyImg"], div[class*="imageContent"], img[src*="cdn.discordapp"]').count() > 0
+                    # Check for image FIRST (don't filter by username if no username provided)
+                    has_image = msg.locator('img[class*="lazyImg"], div[class*="imageContent"], img[src*="cdn.discordapp"]').count() > 0
+                    
+                    if has_image:
+                        logger.debug(f"Message {i} has image, author='{author}'")
                         
-                        if has_image:
+                        # If no username to match, any image is success
+                        if not username:
+                            logger.info(f"✓ Found image (no username filter)")
+                            return True
+                        
+                        # Check if author matches
+                        if username in author_lower or author_lower in username:
                             logger.info(f"✓ Found image from '{author}'")
                             return True
                         else:
-                            logger.debug(f"Message from '{author}' has no image")
+                            logger.debug(f"Image found but author '{author}' != '{username}'")
                             
                 except Exception as e:
+                    logger.debug(f"Error checking message {i}: {e}")
                     continue
             
+            logger.debug(f"No matching message found")
             return False
             
         except Exception as e:
