@@ -47,6 +47,7 @@ class GoogleSheetsManager:
     STATUS_NOT_AUTH = "⚠️ Not Authenticated"
     STATUS_CHANNEL_UNAVAILABLE = "🚫 Channel Unavailable"
     STATUS_USERNAME_MISMATCH = "❓ Username Mismatch"
+    STATUS_SEND_BLOCKED = "⏱️ Send Blocked"
     STATUS_PENDING = "⏳ Pending"
     STATUS_IN_PROGRESS = "🔄 In Progress"
     
@@ -307,6 +308,10 @@ class GoogleSheetsManager:
         """Mark profile as username mismatch"""
         message = f"Expected: {expected}, Got: {actual}"
         self.update_status(row_number, self.STATUS_USERNAME_MISMATCH, message)
+    
+    def set_send_blocked(self, row_number: int, message: str = "Send blocked"):
+        """Mark profile as send blocked (slowmode, mute, rate limit)"""
+        self.update_status(row_number, self.STATUS_SEND_BLOCKED, message)
     
     def _col_to_index(self, col: str) -> int:
         """Convert column letter to 0-based index (A=0, B=1, etc.)"""

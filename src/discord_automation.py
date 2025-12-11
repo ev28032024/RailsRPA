@@ -732,36 +732,61 @@ class DiscordAutomation:
                     # Last resort
                     self.page.keyboard.press("Enter")
             
-            # Step 5: Wait for message to be sent
-            logger.debug("Waiting for message to be sent...")
+            # Step 5: Verify message was sent successfully
+            logger.debug("Verifying message delivery...")
             
-            # Simulate waiting to see message appear
-            self.stealth.random_delay(2.5, 4.0)
+            # Initial wait for Discord to process
+            self.stealth.random_delay(2.0, 3.0)
             
-            # Optional: Verify message was sent by checking for upload modal to disappear
+            # Check for Discord error messages (slowmode, mute, permissions)
+            error_detected, error_message = self._check_send_errors()
+            if error_detected:
+                logger.error(f"❌ Discord error: {error_message}")
+                return False, error_message
+            
+            # Wait for upload modal to disappear (indicates processing)
+            modal_closed = False
             try:
-                # If modal is still visible after delay, it might indicate an error
                 modal_selectors = ['div[role="dialog"]', 'div[class*="uploadModal"]']
                 
                 for modal_selector in modal_selectors:
                     modal = self.page.locator(modal_selector).first
                     if modal.count() > 0:
                         try:
-                            # Wait for modal to disappear (indicates successful send)
-                            modal.wait_for(state="hidden", timeout=5000)
-                            logger.debug("Upload modal closed - message sent")
+                            modal.wait_for(state="hidden", timeout=8000)
+                            modal_closed = True
+                            logger.debug("Upload modal closed")
+                            break
                         except PlaywrightTimeout:
-                            logger.warning("Upload modal still visible - message may not have sent")
-                            # Don't fail, just warn
-                            pass
+                            logger.warning("Upload modal still visible after timeout")
             except Exception as e:
-                logger.debug(f"Could not verify modal state: {e}")
+                logger.debug(f"Modal check: {e}")
             
-            # Final wait for stability
-            time.sleep(1)
+            # Wait a bit more after modal closes
+            time.sleep(1.5)
             
-            logger.info("✅ Image uploaded and sent successfully")
-            return True, "Image sent successfully"
+            # Check for errors again (may appear after modal closes)
+            error_detected, error_message = self._check_send_errors()
+            if error_detected:
+                logger.error(f"❌ Discord error after send: {error_message}")
+                return False, error_message
+            
+            # Verify message appeared in chat
+            message_verified, verify_message = self._verify_message_sent()
+            
+            if not message_verified:
+                # One more check for errors
+                error_detected, error_message = self._check_send_errors()
+                if error_detected:
+                    return False, error_message
+                
+                logger.warning(f"⚠️ Could not verify message delivery: {verify_message}")
+                # Don't fail completely - message might have sent but verification failed
+                logger.info("✅ Image upload completed (delivery unverified)")
+                return True, "Image sent (delivery verification inconclusive)"
+            
+            logger.info("✅ Image uploaded and verified in chat!")
+            return True, "Image sent and verified successfully"
             
         except PlaywrightTimeout as e:
             logger.error(f"Timeout during image upload: {e}")
@@ -772,6 +797,198 @@ class DiscordAutomation:
         except Exception as e:
             logger.error(f"Unexpected error during image upload: {e}", exc_info=True)
             return False, f"Unexpected error: {str(e)}"
+    
+    def _check_send_errors(self) -> Tuple[bool, str]:
+        """
+        Check for Discord error messages that prevent sending
+        
+        Returns:
+            Tuple of (error_found, error_message)
+        """
+        try:
+            # Error selectors and their meanings
+            error_checks = [
+                # Rate limit / Slowmode
+                {
+                    'selectors': [
+                        'div[class*="slowModeIcon"]',
+                        'span:has-text("Slowmode is enabled")',
+                        'div:has-text("You are being rate limited")',
+                        'div:has-text("rate limited")',
+                        'span[class*="slowmode"]'
+                    ],
+                    'message': 'Slowmode active - cannot send message yet'
+                },
+                # Muted / Cannot send
+                {
+                    'selectors': [
+                        'div:has-text("You do not have permission")',
+                        'div:has-text("cannot send messages")',
+                        'div:has-text("You cannot send")',
+                        'div:has-text("не можете отправлять")',  # Russian
+                        'span:has-text("Muted")'
+                    ],
+                    'message': 'Cannot send messages - muted or no permission'
+                },
+                # Message failed
+                {
+                    'selectors': [
+                        'div:has-text("Message could not be delivered")',
+                        'div:has-text("Failed to send")',
+                        'div:has-text("не удалось отправить")',  # Russian
+                        'div[class*="errorMessage"]',
+                        'div[class*="messageError"]'
+                    ],
+                    'message': 'Message delivery failed'
+                },
+                # File too large
+                {
+                    'selectors': [
+                        'div:has-text("file is too large")',
+                        'div:has-text("файл слишком")',  # Russian
+                        'div:has-text("exceeds the")',
+                        'span:has-text("8 MB")',
+                        'span:has-text("25 MB")'
+                    ],
+                    'message': 'File is too large to upload'
+                },
+                # Upload failed
+                {
+                    'selectors': [
+                        'div:has-text("Upload Failed")',
+                        'div:has-text("Could not upload")',
+                        'div:has-text("ошибка загрузки")',  # Russian
+                        'div[class*="uploadError"]'
+                    ],
+                    'message': 'File upload failed'
+                },
+                # Generic error toast/notification
+                {
+                    'selectors': [
+                        'div[class*="toast"][class*="error"]',
+                        'div[class*="notice"][class*="error"]',
+                        'div[class*="errorToast"]'
+                    ],
+                    'message': 'Discord error notification detected'
+                }
+            ]
+            
+            for error_check in error_checks:
+                for selector in error_check['selectors']:
+                    try:
+                        element = self.page.locator(selector).first
+                        if element.count() > 0 and element.is_visible(timeout=500):
+                            # Try to get actual error text
+                            try:
+                                error_text = element.inner_text(timeout=1000)
+                                if error_text and len(error_text) < 200:
+                                    return True, f"{error_check['message']}: {error_text}"
+                            except:
+                                pass
+                            return True, error_check['message']
+                    except:
+                        continue
+            
+            # Check for slowmode timer specifically
+            try:
+                slowmode_timer = self.page.locator('div[class*="slowMode"] span, span[class*="countdown"]').first
+                if slowmode_timer.count() > 0 and slowmode_timer.is_visible(timeout=500):
+                    try:
+                        timer_text = slowmode_timer.inner_text(timeout=1000)
+                        return True, f"Slowmode active: wait {timer_text}"
+                    except:
+                        return True, "Slowmode active - please wait"
+            except:
+                pass
+            
+            return False, ""
+            
+        except Exception as e:
+            logger.debug(f"Error checking for send errors: {e}")
+            return False, ""
+    
+    def _verify_message_sent(self) -> Tuple[bool, str]:
+        """
+        Verify that the message with image was actually sent and appeared in chat
+        
+        Returns:
+            Tuple of (verified, message)
+        """
+        try:
+            # Look for recent messages with images
+            # Discord messages have specific structure
+            
+            # Selectors for messages with attachments/images
+            message_indicators = [
+                # Image in message
+                'div[class*="messageContent"] img[class*="imageWrapper" i]',
+                'div[class*="message"] img[src*="cdn.discordapp.com/attachments"]',
+                'div[class*="imageWrapper"]',
+                'a[class*="imageWrapper"]',
+                # Message container with attachment
+                'div[class*="messageAttachment"]',
+                'div[class*="attachment"]',
+                'div[class*="embedWrapper"]',
+                # Recent message with media
+                'li[class*="messageListItem"]:last-child img',
+                'div[class*="message-"]:last-child div[class*="imageContent"]'
+            ]
+            
+            for selector in message_indicators:
+                try:
+                    elements = self.page.locator(selector)
+                    count = elements.count()
+                    
+                    if count > 0:
+                        # Check the most recent one (last)
+                        last_element = elements.nth(count - 1)
+                        
+                        if last_element.is_visible(timeout=2000):
+                            # Get timestamp or check if it's recent
+                            # Images that just appeared should be at the bottom
+                            try:
+                                # Scroll to bottom to see latest messages
+                                self.page.evaluate('''
+                                    const scroller = document.querySelector('[class*="scroller"]');
+                                    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+                                ''')
+                                time.sleep(0.5)
+                            except:
+                                pass
+                            
+                            logger.debug(f"Found image in chat: {selector}")
+                            return True, "Image found in chat"
+                            
+                except PlaywrightTimeout:
+                    continue
+                except Exception as e:
+                    logger.debug(f"Verification selector error: {e}")
+                    continue
+            
+            # Alternative: Check for "uploading" state cleared
+            try:
+                uploading = self.page.locator('div:has-text("Uploading"), span:has-text("Uploading")').first
+                if uploading.count() == 0 or not uploading.is_visible(timeout=1000):
+                    # No uploading indicator = probably sent
+                    logger.debug("No uploading indicator - assuming sent")
+                    return True, "Upload completed (no uploading state)"
+            except:
+                pass
+            
+            # Check for pending message state
+            try:
+                pending = self.page.locator('div[class*="pending"], div[class*="sending"]').first
+                if pending.count() > 0 and pending.is_visible(timeout=1000):
+                    logger.warning("Message still in pending/sending state")
+                    return False, "Message still pending"
+            except:
+                pass
+            
+            return False, "Could not verify message in chat"
+            
+        except Exception as e:
+            logger.debug(f"Error verifying message: {e}")
+            return False, f"Verification error: {str(e)}"
     
     def close(self):
         """Close the page"""

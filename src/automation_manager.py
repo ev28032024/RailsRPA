@@ -52,7 +52,8 @@ class AutomationManager:
             'skipped': 0,
             'not_authenticated': 0,
             'channel_unavailable': 0,
-            'username_mismatch': 0
+            'username_mismatch': 0,
+            'send_blocked': 0  # Slowmode, mute, rate limit
         }
         
         # Multi-threading settings
@@ -280,11 +281,27 @@ class AutomationManager:
                 expected = result.get('expected_username', '')
                 actual = result.get('actual_username', '')
                 self.google_sheets.set_username_mismatch(row_number, expected, actual)
-                
-        else:
+        
+        elif status == 'SEND_BLOCKED':
+            self._update_stats('send_blocked')
             self._update_stats('failed')
             if self.use_google_sheets and row_number:
-                self.google_sheets.set_failed(row_number, message)
+                self.google_sheets.set_send_blocked(row_number, message)
+                
+        else:
+            # Check if message indicates send block (slowmode, mute, etc)
+            block_keywords = ['slowmode', 'rate limit', 'muted', 'cannot send', 'permission', 'blocked']
+            is_send_blocked = any(kw in message.lower() for kw in block_keywords)
+            
+            if is_send_blocked:
+                self._update_stats('send_blocked')
+            self._update_stats('failed')
+            
+            if self.use_google_sheets and row_number:
+                if is_send_blocked:
+                    self.google_sheets.set_send_blocked(row_number, message)
+                else:
+                    self.google_sheets.set_failed(row_number, message)
         
         self._notify_user(profile_id, status, message)
     
@@ -484,6 +501,7 @@ class AutomationManager:
             'NOT_AUTHENTICATED': '\033[93m', # Yellow
             'CHANNEL_UNAVAILABLE': '\033[95m', # Magenta
             'USERNAME_MISMATCH': '\033[96m', # Cyan
+            'SEND_BLOCKED': '\033[33m',      # Orange/Dark Yellow
             'SKIPPED': '\033[94m'            # Blue
         }
         
@@ -509,13 +527,19 @@ class AutomationManager:
         print(f"⚠️  Not authenticated:      {self.stats['not_authenticated']}")
         print(f"🚫 Channel unavailable:     {self.stats['channel_unavailable']}")
         print(f"❓ Username mismatch:       {self.stats['username_mismatch']}")
+        print(f"⏱️  Send blocked:            {self.stats['send_blocked']}")
         print(f"{'='*60}\n")
         
+        # Calculate success rate
         success_rate = 0
         if self.stats['total'] > 0:
             success_rate = (self.stats['successful'] / self.stats['total']) * 100
         
         print(f"Success rate: {success_rate:.1f}%")
+        
+        # Show breakdown of failures if any
+        if self.stats['send_blocked'] > 0:
+            print(f"\n⚠️  Note: {self.stats['send_blocked']} profile(s) blocked by slowmode/mute")
         
         if self.use_google_sheets:
             print(f"\n📊 Results logged to Google Sheets")
