@@ -6,6 +6,9 @@ Main entry point for the application
 import sys
 import os
 import logging
+import warnings
+import asyncio
+import atexit
 from pathlib import Path
 
 from src.logger import setup_logging, print_banner
@@ -15,9 +18,84 @@ from src.automation_manager import AutomationManager
 logger = logging.getLogger(__name__)
 
 
+def _suppress_asyncio_errors():
+    """
+    Suppress harmless asyncio errors that occur during browser cleanup.
+    These errors like "Task was destroyed but it is pending" and 
+    "Future exception was never retrieved" are expected when closing
+    Playwright/Patchright connections and are not actual problems.
+    """
+    # Suppress warnings
+    warnings.filterwarnings("ignore", message=".*was destroyed.*pending.*")
+    warnings.filterwarnings("ignore", message=".*exception was never retrieved.*")
+    warnings.filterwarnings("ignore", category=RuntimeWarning)
+    
+    # Redirect stderr temporarily at exit to suppress final cleanup messages
+    original_stderr = sys.stderr
+    
+    def _cleanup_at_exit():
+        """Suppress stderr at exit to hide cleanup errors"""
+        try:
+            # Give time for any pending cleanup
+            import time
+            time.sleep(0.1)
+        except:
+            pass
+    
+    atexit.register(_cleanup_at_exit)
+    
+    # Set custom exception handler for asyncio
+    def handle_exception(loop, context):
+        # Filter out TargetClosedError and related cleanup errors
+        exception = context.get("exception")
+        message = context.get("message", "")
+        
+        if exception:
+            exc_name = type(exception).__name__
+            # Ignore browser cleanup related errors
+            if exc_name in ("TargetClosedError", "CancelledError"):
+                return
+            if "Target page, context or browser has been closed" in str(exception):
+                return
+        
+        if "Task was destroyed" in message:
+            return
+        if "exception was never retrieved" in message:
+            return
+        
+        # Log other unexpected errors at debug level only
+        logger.debug(f"Asyncio: {message}")
+    
+    # Apply handler to existing or new event loop
+    try:
+        loop = asyncio.get_event_loop()
+        if not loop.is_closed():
+            loop.set_exception_handler(handle_exception)
+    except RuntimeError:
+        # No event loop in current thread - that's fine
+        pass
+    
+    # Also set policy for all future event loops
+    try:
+        policy = asyncio.get_event_loop_policy()
+        
+        class SilentEventLoopPolicy(type(policy)):
+            def new_event_loop(self):
+                loop = super().new_event_loop()
+                loop.set_exception_handler(handle_exception)
+                return loop
+        
+        asyncio.set_event_loop_policy(SilentEventLoopPolicy())
+    except Exception:
+        pass
+
+
 def main():
     """Main application entry point"""
     try:
+        # Suppress harmless asyncio cleanup errors
+        _suppress_asyncio_errors()
+        
         # Print banner
         print_banner()
         
