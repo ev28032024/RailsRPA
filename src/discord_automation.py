@@ -133,6 +133,9 @@ class DiscordAutomation:
         """
         Verify that the logged-in account matches expected username
         
+        Discord may show combined text like "DisplayNameusernameOnline"
+        So we check if expected username is CONTAINED in the detected text
+        
         Args:
             expected_username: Expected Discord username from config
             
@@ -161,9 +164,20 @@ class DiscordAutomation:
             if '#' in actual_clean:
                 actual_clean = actual_clean.split('#')[0]
             
-            if expected_clean == actual_clean:
-                logger.info(f"✅ Username verified: {actual_username}")
-                return True, actual_username, f"Username verified: {actual_username}"
+            # Check for match using multiple strategies:
+            # 1. Exact match
+            # 2. Expected username is contained in actual (Discord may show "DisplayNameusernameStatus")
+            # 3. Actual is contained in expected (for partial detection)
+            
+            is_match = (
+                expected_clean == actual_clean or           # Exact match
+                expected_clean in actual_clean or           # Expected contained in actual
+                actual_clean in expected_clean              # Actual contained in expected
+            )
+            
+            if is_match:
+                logger.info(f"✅ Username verified: '{expected_username}' found in '{actual_username}'")
+                return True, actual_username, f"Username verified: {expected_username}"
             else:
                 logger.warning(f"❌ Username mismatch! Expected: {expected_username}, Got: {actual_username}")
                 return False, actual_username, f"Username mismatch: expected '{expected_username}', got '{actual_username}'"
@@ -766,4 +780,3 @@ class DiscordAutomation:
                 self.page.close()
         except Exception as e:
             logger.debug(f"Error closing page: {e}")
-
