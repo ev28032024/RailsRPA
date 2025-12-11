@@ -56,6 +56,7 @@ class AdsPowerAPI:
                 result = data.get("data", {})
                 if not result:
                     logger.error(f"Empty data in response for profile {profile_id}")
+                    logger.debug(f"Full response: {data}")
                     return False, None
                     
                 ws_dict = result.get("ws", {})
@@ -63,8 +64,28 @@ class AdsPowerAPI:
                 debug_port = result.get("debug_port")
                 
                 if not ws_endpoint:
-                    logger.error(f"No WebSocket endpoint in response for profile {profile_id}")
-                    return False, None
+                    logger.debug(f"No 'playwright' WebSocket endpoint, trying alternatives...")
+                    logger.debug(f"Response data: {result}")
+                    logger.debug(f"WS dict: {ws_dict}")
+                    
+                    # Check for alternative WebSocket endpoints
+                    if ws_dict:
+                        # Try selenium or webdriver endpoints as fallback
+                        ws_endpoint = (ws_dict.get("selenium") or 
+                                     ws_dict.get("puppeteer") or
+                                     ws_dict.get("webdriver"))
+                        
+                        if ws_endpoint:
+                            logger.info(f"Using WebSocket endpoint: {ws_endpoint}")
+                        else:
+                            logger.error(f"No valid WebSocket endpoint found. Available keys: {list(ws_dict.keys())}")
+                            return False, None
+                    else:
+                        logger.error(f"No WebSocket endpoints available in API response")
+                        return False, None
+                
+                # Ensure WebSocket endpoint has correct format
+                ws_endpoint = self._format_ws_endpoint(ws_endpoint, debug_port)
                 
                 connection_info = {
                     "ws_endpoint": ws_endpoint,
@@ -152,4 +173,59 @@ class AdsPowerAPI:
         except Exception as e:
             logger.debug(f"Error checking profile status: {e}")
             return None
-
+    
+    def _format_ws_endpoint(self, endpoint: str, debug_port: Optional[int] = None) -> str:
+        """
+        Format WebSocket endpoint to correct URL format for Playwright/Patchright
+        
+        Args:
+            endpoint: Raw endpoint from AdsPower API (may be just host:port or full URL)
+            debug_port: Debug port from API response
+            
+        Returns:
+            Properly formatted WebSocket URL
+        """
+        if not endpoint:
+            return endpoint
+            
+        # If already has protocol, return as-is
+        if endpoint.startswith(('ws://', 'wss://', 'http://', 'https://')):
+            logger.debug(f"Endpoint already formatted: {endpoint}")
+            return endpoint
+        
+        # Format: "host:port" -> need to construct proper CDP URL
+        # Try to get debug port URL for CDP connection
+        try:
+            # Parse host and port from endpoint
+            if ':' in endpoint:
+                host, port = endpoint.rsplit(':', 1)
+                port = int(port)
+            else:
+                host = endpoint
+                port = debug_port or 9222  # Default Chrome DevTools port
+            
+            # First try to get browser WebSocket URL from /json/version endpoint
+            cdp_url = f"http://{host}:{port}"
+            logger.debug(f"Trying to get WebSocket URL from CDP: {cdp_url}")
+            
+            try:
+                response = self.session.get(f"{cdp_url}/json/version", timeout=5)
+                if response.status_code == 200:
+                    version_data = response.json()
+                    ws_url = version_data.get("webSocketDebuggerUrl")
+                    if ws_url:
+                        logger.info(f"Got WebSocket URL from CDP: {ws_url}")
+                        return ws_url
+            except Exception as e:
+                logger.debug(f"Could not get WebSocket URL from /json/version: {e}")
+            
+            # Fallback: construct WebSocket URL directly
+            # For CDP, we use http:// URL and let Playwright handle the conversion
+            formatted = f"http://{host}:{port}"
+            logger.info(f"Using HTTP endpoint for CDP: {formatted}")
+            return formatted
+            
+        except Exception as e:
+            logger.warning(f"Error formatting endpoint '{endpoint}': {e}")
+            # Return original if formatting fails
+            return endpoint
