@@ -78,31 +78,37 @@ def main():
             print()
             return 1
         
-        # Verify profiles have images
+        # Check if using Google Sheets
+        google_sheets_enabled = config.settings.get('google_sheets', {}).get('enabled', False)
+        
+        # Verify profiles have images (only for config.yaml profiles, not Google Sheets)
         profiles = config.get_enabled_profiles()
         
-        if not profiles:
+        if not profiles and not google_sheets_enabled:
             logger.error("No enabled profiles found in configuration")
             print("\n❌ No enabled profiles found in configuration")
-            print("Please enable at least one profile in config.yaml\n")
+            print("Please enable at least one profile in config.yaml")
+            print("Or enable Google Sheets integration.\n")
             return 1
         
+        # Check for missing images in config.yaml profiles
         missing_images = []
         
-        for profile in profiles:
-            image_name = profile.get('image_name')
-            profile_id = profile.get('profile_id')
-            
-            if not image_name:
-                logger.warning(f"Profile {profile_id} has no image_name")
-                missing_images.append((profile_id, "N/A"))
-                continue
+        if profiles:
+            for profile in profiles:
+                image_name = profile.get('image_name')
+                profile_id = profile.get('profile_id')
                 
-            image_path = config.get_image_path(image_name)
-            if not image_path:
-                missing_images.append((profile_id, image_name))
+                if not image_name:
+                    logger.warning(f"Profile {profile_id} has no image_name")
+                    missing_images.append((profile_id, "N/A"))
+                    continue
+                    
+                image_path = config.get_image_path(image_name)
+                if not image_path:
+                    missing_images.append((profile_id, image_name))
         
-        if missing_images:
+        if missing_images and not google_sheets_enabled:
             print("\n⚠️  Warning: Some images are missing:")
             for profile_id, image_name in missing_images:
                 print(f"   Profile {profile_id}: {image_name}")
@@ -115,6 +121,8 @@ def main():
             except (KeyboardInterrupt, EOFError):
                 print("\n\nAborted.\n")
                 return 0
+        elif google_sheets_enabled:
+            print("\n📊 Google Sheets mode enabled - profiles will be loaded from spreadsheet")
         
         # Create automation manager
         manager = AutomationManager(config)
@@ -123,7 +131,10 @@ def main():
         print(f"\n{'='*60}")
         print(f"Ready to start automation")
         print(f"{'='*60}")
-        print(f"Profiles to process: {len(profiles)}")
+        if google_sheets_enabled:
+            print(f"Profiles source: Google Sheets")
+        else:
+            print(f"Profiles to process: {len(profiles)}")
         print(f"Discord channel: {config.get_discord_url()}")
         print(f"{'='*60}\n")
         
