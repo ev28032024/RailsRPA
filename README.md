@@ -95,12 +95,13 @@ RailsRPA/
 │   └── ...
 ├── src/                      # Исходный код
 │   ├── __init__.py
-│   ├── adspower_api.py      # Работа с AdsPower API
-│   ├── config_manager.py    # Управление конфигурацией
+│   ├── adspower_api.py       # Работа с AdsPower API
+│   ├── config_manager.py     # Управление конфигурацией
 │   ├── discord_automation.py # Автоматизация Discord
 │   ├── automation_manager.py # Главный оркестратор
-│   └── logger.py            # Настройка логирования
-└── automation.log           # Файл логов (создается автоматически)
+│   ├── logger.py             # Настройка логирования
+│   └── google_sheets.py      # Обработчик Google Sheets
+└── automation.log            # Файл логов (создается автоматически)
 ```
 
 ## 🎯 Использование
@@ -214,6 +215,3 @@ settings:
 - **INFO**: Общая информация о работе (по умолчанию)
 - **WARNING**: Предупреждения
 - **ERROR**: Ошибки
-
-
-
