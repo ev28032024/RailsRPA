@@ -361,7 +361,12 @@ class AutomationManager:
                     logger.info(f"✓ {auth_message}")
                     
                     # Step 2: Verify username (if expected username is provided)
-                    if expected_username and self.config.settings.get('google_sheets', {}).get('verify_username', True):
+                    # Check global setting first, then Google Sheets specific setting
+                    verify_enabled = self.config.settings.get('verify_username', True)
+                    if self.use_google_sheets:
+                        verify_enabled = self.config.settings.get('google_sheets', {}).get('verify_username', verify_enabled)
+                    
+                    if expected_username and verify_enabled:
                         logger.info(f"Step 2: Verifying Discord username...")
                         username_match, actual_username, verify_message = discord.verify_username(expected_username)
                         
