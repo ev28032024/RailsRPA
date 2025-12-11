@@ -8,20 +8,39 @@
 # или если Google Sheets не настроен
 
 profiles:
-  # Profile ID from AdsPower: Image filename + optional username verification
-  - profile_id: "abc123"
+  # ============================================================
+  # ВАРИАНТ 1: Использование profile_id (ID профиля AdsPower)
+  # Пример: i16to9p, i1700eo, abc123
+  # ============================================================
+  - profile_id: "i16to9p"
     image_name: "image23767"
     username: "cooluser"      # Ожидаемый никнейм Discord (опционально)
     enabled: true
   
-  - profile_id: "def456"
+  - profile_id: "i1700eo"
     image_name: "image23768"
     username: "testuser"      # Если никнейм не совпадёт - профиль будет пропущен
     enabled: true
   
-  - profile_id: "ghi789"
+  # ============================================================
+  # ВАРИАНТ 2: Использование serial_number (номер профиля)
+  # Пример: 27, 46, 123
+  # ============================================================
+  - serial_number: 27
     image_name: "image23769"
+    username: "user27"
+    enabled: true
+  
+  - serial_number: 46
+    image_name: "image23770"
     username: ""              # Пустой = проверка отключена для этого профиля
+    enabled: true
+  
+  # ============================================================
+  # ПРИМЕЧАНИЕ: Используйте либо profile_id, либо serial_number
+  # ============================================================
+  - profile_id: "ghi789"
+    image_name: "image23771"
     enabled: false            # Skip this profile
 
 # ============================================================
@@ -44,21 +63,22 @@ settings:
     spreadsheet_id: "YOUR_SPREADSHEET_ID_HERE"
     
     # Имя листа (sheet/worksheet)
-    sheet_name: "Sheet1"              # Название вашего листа
+    sheet_name: "Sheet1"              # или название вашего листа
     
     # Структура таблицы
     header_row: 1                     # Номер строки с заголовками
     data_start_row: 2                 # Номер строки с данными (обычно header_row + 1)
     
-    # Маппинг колонок (A, B, C, D, E, F...)
+    # Маппинг колонок (A, B, C, D, E, F, G...)
     # Настройте под структуру вашей таблицы
     columns:
-      profile_id: "A"                 # ID профиля AdsPower
-      username: "B"                   # Никнейм Discord (для верификации)
-      image_name: "C"                 # Название изображения (screen)
-      status: "D"                     # Статус выполнения
-      timestamp: "E"                  # Время последнего обновления (опционально)
-      message: "F"                    # Сообщение о статусе (опционально)
+      profile_id: "A"                 # ID профиля AdsPower (i16to9p)
+      serial_number: "B"              # ИЛИ номер профиля (27, 46) - опционально
+      username: "C"                   # Никнейм Discord (для верификации)
+      image_name: "D"                 # Название изображения (screen)
+      status: "E"                     # Статус выполнения
+      timestamp: "F"                  # Время последнего обновления (опционально)
+      message: "G"                    # Сообщение о статусе (опционально)
     
     # Опции
     verify_username: true             # Проверять совпадение никнейма
