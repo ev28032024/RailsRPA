@@ -44,7 +44,7 @@ settings:
     spreadsheet_id: "YOUR_SPREADSHEET_ID_HERE"
     
     # Имя листа (sheet/worksheet)
-    sheet_name: "Sheet1"              # или название вашего листа
+    sheet_name: "Sheet1"              # Название вашего листа
     
     # Структура таблицы
     header_row: 1                     # Номер строки с заголовками
@@ -100,3 +100,4 @@ settings:
   # ========== LOGGING ==========
   log_file: "./automation.log"
   log_level: "INFO"                   # DEBUG, INFO, WARNING, ERROR
+
