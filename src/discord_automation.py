@@ -59,6 +59,120 @@ class DiscordAutomation:
         except Exception as e:
             logger.warning(f"Could not activate stealth mode: {e}")
     
+    def get_discord_username(self) -> Tuple[bool, str]:
+        """
+        Get the current Discord username from the page
+        
+        Returns:
+            Tuple of (success, username_or_error)
+        """
+        try:
+            # Multiple selectors for username detection
+            username_selectors = [
+                # User panel at bottom left
+                'div[class*="panelTitle"] > span',
+                'section[aria-label*="User area"] div[class*="nameTag"]',
+                'div[class*="container"] div[class*="usernameContainer"] div[class*="username"]',
+                # User settings area
+                'div[class*="userInfo"] span[class*="username"]',
+                # Username in panel
+                '[class*="panels"] [class*="nameTag"]',
+                '[class*="avatarWrapper"] + div span',
+                # More specific selectors
+                'section[class*="panels"] div[class*="nameTag"] div:first-child',
+                'div[aria-label="User area"] span[class*="username"]'
+            ]
+            
+            logger.debug("Attempting to get Discord username...")
+            
+            for selector in username_selectors:
+                try:
+                    element = self.page.locator(selector).first
+                    if element.count() > 0:
+                        # Wait a bit for element to be stable
+                        element.wait_for(state="visible", timeout=3000)
+                        username = element.text_content(timeout=2000)
+                        
+                        if username and username.strip():
+                            username = username.strip()
+                            # Clean username (remove discriminator if present)
+                            if '#' in username:
+                                username = username.split('#')[0]
+                            logger.info(f"Found Discord username: {username}")
+                            return True, username
+                except:
+                    continue
+            
+            # Alternative: Try to get username from user settings
+            try:
+                # Click on user settings to reveal username
+                user_area = self.page.locator('section[aria-label*="User area"], [class*="panels"]').first
+                if user_area.count() > 0:
+                    # Try to read any text that looks like a username
+                    text = user_area.text_content(timeout=3000)
+                    if text:
+                        # Parse potential username from text
+                        lines = [l.strip() for l in text.split('\n') if l.strip()]
+                        if lines:
+                            potential_username = lines[0]
+                            # Validate it looks like a username
+                            if len(potential_username) >= 2 and len(potential_username) <= 32:
+                                logger.info(f"Found potential Discord username: {potential_username}")
+                                return True, potential_username
+            except:
+                pass
+            
+            logger.warning("Could not find Discord username")
+            return False, "Username not found"
+            
+        except Exception as e:
+            logger.error(f"Error getting Discord username: {e}")
+            return False, f"Error: {str(e)}"
+    
+    def verify_username(self, expected_username: str) -> Tuple[bool, str, str]:
+        """
+        Verify that the logged-in account matches expected username
+        
+        Args:
+            expected_username: Expected Discord username from config
+            
+        Returns:
+            Tuple of (match, actual_username, message)
+        """
+        try:
+            if not expected_username or expected_username.strip() == "":
+                logger.debug("No expected username provided, skipping verification")
+                return True, "", "Username verification skipped (no expected username)"
+            
+            success, actual_username = self.get_discord_username()
+            
+            if not success:
+                logger.warning(f"Could not get current username for verification")
+                # Don't fail on this - just warn
+                return True, "", "Username verification skipped (could not detect username)"
+            
+            # Normalize both usernames for comparison
+            expected_clean = expected_username.lower().strip()
+            actual_clean = actual_username.lower().strip()
+            
+            # Remove potential discriminator
+            if '#' in expected_clean:
+                expected_clean = expected_clean.split('#')[0]
+            if '#' in actual_clean:
+                actual_clean = actual_clean.split('#')[0]
+            
+            if expected_clean == actual_clean:
+                logger.info(f"✅ Username verified: {actual_username}")
+                return True, actual_username, f"Username verified: {actual_username}"
+            else:
+                logger.warning(f"❌ Username mismatch! Expected: {expected_username}, Got: {actual_username}")
+                return False, actual_username, f"Username mismatch: expected '{expected_username}', got '{actual_username}'"
+                
+        except Exception as e:
+            logger.error(f"Error verifying username: {e}")
+            # Don't fail the whole process on verification error
+            return True, "", f"Username verification error: {str(e)}"
+    
     def _wait_for_page_load(self, timeout: int = 10000) -> bool:
         """
         Wait for page to fully load (including network activity)
