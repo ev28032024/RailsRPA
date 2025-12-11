@@ -237,7 +237,9 @@ class AutomationManager:
         color = status_colors.get(status, '\033[0m')
         reset = '\033[0m'
         
-        notification = f"\n{color}[{status}]{reset} Profile: {profile_id}\n{' '*len(status)+2}Message: {message}\n"
+        # Fixed: Use parentheses for correct operation order
+        indent = ' ' * (len(status) + 3)
+        notification = f"\n{color}[{status}]{reset} Profile: {profile_id}\n{indent}Message: {message}\n"
         print(notification)
     
     def _print_statistics(self):
@@ -260,4 +262,3 @@ class AutomationManager:
             success_rate = (self.stats['successful'] / self.stats['total']) * 100
         
         print(f"Success rate: {success_rate:.1f}%\n")
-
