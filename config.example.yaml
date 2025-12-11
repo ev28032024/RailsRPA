@@ -1,0 +1,42 @@
+# Configuration file for AdsPower Discord Automation
+# Assign images to specific AdsPower profiles
+
+profiles:
+  # Profile ID from AdsPower: Image filename (without extension)
+  - profile_id: "abc123"
+    image_name: "image23767"
+    enabled: true
+  
+  - profile_id: "def456"
+    image_name: "image23768"
+    enabled: true
+  
+  - profile_id: "ghi789"
+    image_name: "image23769"
+    enabled: false  # Skip this profile
+
+settings:
+  # AdsPower API settings
+  adspower_api_host: "http://local.adspower.net:50325"
+  
+  # Discord channel URL
+  discord_channel_url: "https://discord.com/channels/1243221149047853056/1435333476508373106"
+  
+  # Images directory
+  images_dir: "./images"
+  
+  # Timeouts (seconds) - увеличены для надежной загрузки страниц
+  page_load_timeout: 45        # Время ожидания загрузки страницы (увеличено для медленного интернета)
+  auth_check_timeout: 15       # Время проверки авторизации
+  upload_timeout: 20           # Время загрузки изображения
+  between_profiles_delay: 3    # Задержка между профилями (рекомендуется 2-5 секунд)
+  
+  # Stealth mode (Anti-detection) - Маскировка автоматизации
+  stealth_mode: true           # Включить маскировку (рекомендуется: true)
+  human_behavior: true         # Имитация человеческого поведения (движения мыши, случайные задержки)
+  random_delays: true          # Случайные задержки между действиями
+  
+  # Logging
+  log_file: "./automation.log"
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+

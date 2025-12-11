@@ -1,0 +1,2 @@
+# AdsPower Discord Automation
+
