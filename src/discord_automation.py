@@ -49,6 +49,9 @@ class DiscordAutomation:
         self.page.set_default_navigation_timeout(self.page_load_timeout)
         self.page.set_default_timeout(self.page_load_timeout)
         
+        # Store current username for message verification
+        self.current_username = ""
+        
         # Initialize stealth manager
         self.stealth = StealthManager(page)
         
@@ -448,6 +451,15 @@ class DiscordAutomation:
                 
                 # Additional verification - wait a bit more to ensure stability
                 time.sleep(1)
+                
+                # Try to get and store current username for later verification
+                try:
+                    success, username = self.get_discord_username()
+                    if success and username:
+                        self.current_username = username
+                        logger.debug(f"Stored current username: {self.current_username}")
+                except Exception as e:
+                    logger.debug(f"Could not get username during auth check: {e}")
                 
                 return True, "Account is authenticated"
             else:
@@ -910,86 +922,269 @@ class DiscordAutomation:
     
     def _verify_message_sent(self) -> Tuple[bool, str]:
         """
-        Verify that the message with image was actually sent and appeared in chat
+        Verify that the message with image was actually sent by current user
+        
+        Checks:
+        1. Find last messages in chat
+        2. Check if any recent message is from current user
+        3. Check if that message contains an image/attachment
         
         Returns:
             Tuple of (verified, message)
         """
         try:
-            # Look for recent messages with images
-            # Discord messages have specific structure
-            
-            # Selectors for messages with attachments/images
-            message_indicators = [
-                # Image in message
-                'div[class*="messageContent"] img[class*="imageWrapper" i]',
-                'div[class*="message"] img[src*="cdn.discordapp.com/attachments"]',
-                'div[class*="imageWrapper"]',
-                'a[class*="imageWrapper"]',
-                # Message container with attachment
-                'div[class*="messageAttachment"]',
-                'div[class*="attachment"]',
-                'div[class*="embedWrapper"]',
-                # Recent message with media
-                'li[class*="messageListItem"]:last-child img',
-                'div[class*="message-"]:last-child div[class*="imageContent"]'
-            ]
-            
-            for selector in message_indicators:
-                try:
-                    elements = self.page.locator(selector)
-                    count = elements.count()
-                    
-                    if count > 0:
-                        # Check the most recent one (last)
-                        last_element = elements.nth(count - 1)
-                        
-                        if last_element.is_visible(timeout=2000):
-                            # Get timestamp or check if it's recent
-                            # Images that just appeared should be at the bottom
-                            try:
-                                # Scroll to bottom to see latest messages
-                                self.page.evaluate('''
-                                    const scroller = document.querySelector('[class*="scroller"]');
-                                    if (scroller) scroller.scrollTop = scroller.scrollHeight;
-                                ''')
-                                time.sleep(0.5)
-                            except:
-                                pass
-                            
-                            logger.debug(f"Found image in chat: {selector}")
-                            return True, "Image found in chat"
-                            
-                except PlaywrightTimeout:
-                    continue
-                except Exception as e:
-                    logger.debug(f"Verification selector error: {e}")
-                    continue
-            
-            # Alternative: Check for "uploading" state cleared
+            # Scroll to bottom to see latest messages
             try:
-                uploading = self.page.locator('div:has-text("Uploading"), span:has-text("Uploading")').first
-                if uploading.count() == 0 or not uploading.is_visible(timeout=1000):
-                    # No uploading indicator = probably sent
-                    logger.debug("No uploading indicator - assuming sent")
-                    return True, "Upload completed (no uploading state)"
+                self.page.evaluate('''
+                    const scroller = document.querySelector('[class*="scroller"][class*="messages"]') 
+                        || document.querySelector('[class*="messagesWrapper"] [class*="scroller"]')
+                        || document.querySelector('[data-list-id="chat-messages"]');
+                    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+                ''')
+                time.sleep(0.5)
             except:
                 pass
             
-            # Check for pending message state
+            # Get current username for comparison (normalize it)
+            current_user = self.current_username.lower().strip() if self.current_username else ""
+            
+            # If we don't have username stored, try to get it now
+            if not current_user:
+                try:
+                    success, username = self.get_discord_username()
+                    if success and username:
+                        current_user = username.lower().strip()
+                        # Remove discriminator if present
+                        if '#' in current_user:
+                            current_user = current_user.split('#')[0]
+                except:
+                    pass
+            
+            # Clean username - remove extra text that may be appended
+            if current_user:
+                # Extract just the username part (may have status/display name mixed in)
+                # Keep only alphanumeric and underscore (Discord username format)
+                import re
+                # Try to find a valid username pattern
+                username_match = re.search(r'([a-z0-9_.]{2,32})', current_user)
+                if username_match:
+                    current_user = username_match.group(1)
+            
+            logger.debug(f"Verifying messages for user: '{current_user}'")
+            
+            # Strategy 1: Check last few message groups for our username
+            found_our_message_with_image = self._check_recent_messages_for_user(current_user)
+            
+            if found_our_message_with_image:
+                logger.debug("✓ Found our message with image in chat")
+                return True, "Image from current user found in chat"
+            
+            # Strategy 2: Check for pending/failed message states
             try:
-                pending = self.page.locator('div[class*="pending"], div[class*="sending"]').first
+                pending = self.page.locator('div[class*="pending"], div[class*="sending"], li[class*="pending"]').first
                 if pending.count() > 0 and pending.is_visible(timeout=1000):
                     logger.warning("Message still in pending/sending state")
                     return False, "Message still pending"
             except:
                 pass
             
-            return False, "Could not verify message in chat"
+            # Strategy 3: Check for upload in progress
+            try:
+                uploading = self.page.locator('[class*="uploadProgress"], [class*="uploading"]').first
+                if uploading.count() > 0 and uploading.is_visible(timeout=500):
+                    logger.warning("Upload still in progress")
+                    return False, "Upload still in progress"
+            except:
+                pass
+            
+            # Strategy 4: If we have no username, fallback to checking any recent image
+            if not current_user:
+                logger.warning("No username available for verification - checking for any recent image")
+                return self._check_any_recent_image()
+            
+            return False, "Could not find message from current user in chat"
             
         except Exception as e:
             logger.debug(f"Error verifying message: {e}")
             return False, f"Verification error: {str(e)}"
+    
+    def _check_recent_messages_for_user(self, username: str) -> bool:
+        """
+        Check if any of the last few messages are from the specified user and contain an image
+        
+        Args:
+            username: Lowercase username to look for
+            
+        Returns:
+            True if found a message with image from this user
+        """
+        if not username:
+            return False
+        
+        try:
+            # Discord message list item selectors
+            message_selectors = [
+                'li[class*="messageListItem"]',
+                'div[class*="message-"][id^="chat-messages"]',
+                '[data-list-item-id^="chat-messages"]'
+            ]
+            
+            for msg_selector in message_selectors:
+                try:
+                    messages = self.page.locator(msg_selector)
+                    count = messages.count()
+                    
+                    if count == 0:
+                        continue
+                    
+                    # Check last 5 messages (most recent)
+                    start_idx = max(0, count - 5)
+                    
+                    for i in range(count - 1, start_idx - 1, -1):
+                        try:
+                            msg = messages.nth(i)
+                            
+                            if not msg.is_visible(timeout=500):
+                                continue
+                            
+                            # Get message author
+                            author = self._get_message_author(msg)
+                            
+                            if not author:
+                                continue
+                            
+                            author_lower = author.lower().strip()
+                            
+                            # Check if author matches (substring match for flexibility)
+                            author_matches = (
+                                username in author_lower or 
+                                author_lower in username or
+                                username == author_lower
+                            )
+                            
+                            if author_matches:
+                                # Check if this message has an image/attachment
+                                has_image = self._message_has_image(msg)
+                                
+                                if has_image:
+                                    logger.debug(f"Found message with image from '{author}'")
+                                    return True
+                                else:
+                                    logger.debug(f"Found message from '{author}' but no image")
+                        except Exception as e:
+                            logger.debug(f"Error checking message {i}: {e}")
+                            continue
+                            
+                except Exception as e:
+                    logger.debug(f"Error with selector {msg_selector}: {e}")
+                    continue
+            
+            return False
+            
+        except Exception as e:
+            logger.debug(f"Error in _check_recent_messages_for_user: {e}")
+            return False
+    
+    def _get_message_author(self, message_element) -> str:
+        """
+        Extract author name from a message element
+        
+        Args:
+            message_element: Playwright locator for message
+            
+        Returns:
+            Author name or empty string
+        """
+        try:
+            # Author name selectors within a message
+            author_selectors = [
+                'span[class*="username"]',
+                'span[class*="headerText"] span',
+                'h3[class*="header"] span[class*="username"]',
+                '[class*="userNameText"]',
+                '[class*="author"] span'
+            ]
+            
+            for selector in author_selectors:
+                try:
+                    author_elem = message_element.locator(selector).first
+                    if author_elem.count() > 0:
+                        text = author_elem.inner_text(timeout=500)
+                        if text and len(text) < 50:  # Reasonable username length
+                            return text.strip()
+                except:
+                    continue
+            
+            return ""
+            
+        except Exception as e:
+            logger.debug(f"Error getting message author: {e}")
+            return ""
+    
+    def _message_has_image(self, message_element) -> bool:
+        """
+        Check if a message element contains an image or attachment
+        
+        Args:
+            message_element: Playwright locator for message
+            
+        Returns:
+            True if message has image/attachment
+        """
+        try:
+            image_selectors = [
+                'img[class*="imageWrapper" i]',
+                'img[src*="cdn.discordapp.com/attachments"]',
+                'div[class*="imageWrapper"]',
+                'a[class*="imageWrapper"]',
+                'div[class*="imageContent"]',
+                'div[class*="attachment"]',
+                '[class*="mediaAttachmentsContainer"]',
+                'img[class*="lazyImg"]'
+            ]
+            
+            for selector in image_selectors:
+                try:
+                    img = message_element.locator(selector).first
+                    if img.count() > 0:
+                        return True
+                except:
+                    continue
+            
+            return False
+            
+        except Exception as e:
+            logger.debug(f"Error checking for image: {e}")
+            return False
+    
+    def _check_any_recent_image(self) -> Tuple[bool, str]:
+        """
+        Fallback: Check if any image was uploaded recently (when username unavailable)
+        This is less reliable but better than nothing
+        
+        Returns:
+            Tuple of (found, message)
+        """
+        try:
+            # Check for very recent image (last message only)
+            last_msg_selectors = [
+                'li[class*="messageListItem"]:last-child',
+                '[data-list-item-id^="chat-messages"]:last-child'
+            ]
+            
+            for selector in last_msg_selectors:
+                try:
+                    last_msg = self.page.locator(selector).first
+                    if last_msg.count() > 0 and self._message_has_image(last_msg):
+                        logger.debug("Found image in last message (no username verification)")
+                        return True, "Image found in last message (username verification skipped)"
+                except:
+                    continue
+            
+            return False, "No recent image found"
+            
+        except Exception as e:
+            return False, f"Fallback check error: {e}"
     
     def close(self):
         """Close the page"""
