@@ -1,5 +1,11 @@
 # Configuration file for AdsPower Discord Automation
-# Assign images to specific AdsPower profiles
+# Supports two modes: local config OR Google Sheets
+
+# ============================================================
+# РЕЖИМ 1: Локальная конфигурация (profiles section)
+# ============================================================
+# Используется если google_sheets.enabled = false
+# или если Google Sheets не настроен
 
 profiles:
   # Profile ID from AdsPower: Image filename (without extension)
@@ -15,31 +21,73 @@ profiles:
     image_name: "image23769"
     enabled: false  # Skip this profile
 
+# ============================================================
+# РЕЖИМ 2: Google Sheets (рекомендуется для больших объемов)
+# ============================================================
+# Профили берутся из Google Таблицы
+# Статусы автоматически записываются обратно в таблицу
+
 settings:
-  # AdsPower API settings
+  # ========== GOOGLE SHEETS INTEGRATION ==========
+  google_sheets:
+    enabled: false                    # true = использовать Google Sheets, false = использовать profiles выше
+    
+    # Credentials file (Service Account JSON)
+    # Скачайте из Google Cloud Console → APIs & Services → Credentials
+    credentials_file: "credentials.json"
+    
+    # Spreadsheet ID (из URL таблицы)
+    # Пример: https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit
+    spreadsheet_id: "YOUR_SPREADSHEET_ID_HERE"
+    
+    # Имя листа (sheet/worksheet)
+    sheet_name: "Sheet1"              # или название вашего листа
+    
+    # Структура таблицы
+    header_row: 1                     # Номер строки с заголовками
+    data_start_row: 2                 # Номер строки с данными (обычно header_row + 1)
+    
+    # Маппинг колонок (A, B, C, D, E, F...)
+    # Настройте под структуру вашей таблицы
+    columns:
+      profile_id: "A"                 # ID профиля AdsPower
+      username: "B"                   # Никнейм Discord (для верификации)
+      image_name: "C"                 # Название изображения (screen)
+      status: "D"                     # Статус выполнения
+      timestamp: "E"                  # Время последнего обновления (опционально)
+      message: "F"                    # Сообщение о статусе (опционально)
+    
+    # Опции
+    verify_username: true             # Проверять совпадение никнейма
+    log_timestamp: true               # Записывать время в таблицу
+    log_message: true                 # Записывать сообщения в таблицу
+  
+  # ========== ADSPOWER API ==========
   adspower_api_host: "http://local.adspower.net:50325"
   
-  # Discord channel URL
+  # ========== DISCORD ==========
   discord_channel_url: "https://discord.com/channels/1243221149047853056/1435333476508373106"
   
-  # Images directory
+  # ========== IMAGES ==========
   images_dir: "./images"
   
-  # Multi-threading settings (Многопоточность)
-  max_workers: 1               # Количество параллельных потоков (1 = последовательный режим)
-                               # Рекомендуется: 1-3 для безопасности, до 5-10 для скорости
+  # ========== MULTI-THREADING ==========
+  max_workers: 1                      # Количество параллельных потоков
+                                      # 1 = последовательный режим
+                                      # 2-3 = безопасный параллельный
+                                      # 4-10 = быстрый (⚠️ риск rate-limiting)
   
-  # Timeouts (seconds) - увеличены для надежной загрузки страниц
-  page_load_timeout: 45        # Время ожидания загрузки страницы (увеличено для медленного интернета)
-  auth_check_timeout: 15       # Время проверки авторизации
-  upload_timeout: 20           # Время загрузки изображения
-  between_profiles_delay: 3    # Задержка между профилями (рекомендуется 2-5 секунд) | ⚠️ В многопоточном режиме эта задержка НЕ применяется
+  # ========== TIMEOUTS (seconds) ==========
+  page_load_timeout: 45               # Загрузка страницы
+  auth_check_timeout: 15              # Проверка авторизации
+  upload_timeout: 20                  # Загрузка изображения
+  between_profiles_delay: 3           # Задержка между профилями (только в sequential режиме)
   
-  # Stealth mode (Anti-detection) - Маскировка автоматизации
-  stealth_mode: true           # Включить маскировку (рекомендуется: true)
-  human_behavior: true         # Имитация человеческого поведения (движения мыши, случайные задержки)
-  random_delays: true          # Случайные задержки между действиями
+  # ========== STEALTH MODE ==========
+  stealth_mode: true                  # Маскировка автоматизации
+  human_behavior: true                # Имитация человека
+  random_delays: true                 # Случайные задержки
   
-  # Logging
+  # ========== LOGGING ==========
   log_file: "./automation.log"
-  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_level: "INFO"                   # DEBUG, INFO, WARNING, ERROR
