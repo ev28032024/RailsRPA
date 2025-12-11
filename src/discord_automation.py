@@ -738,13 +738,7 @@ class DiscordAutomation:
             # Initial wait for Discord to process
             self.stealth.random_delay(2.0, 3.0)
             
-            # Check for Discord error messages (slowmode, mute, permissions)
-            error_detected, error_message = self._check_send_errors()
-            if error_detected:
-                logger.error(f"❌ Discord error: {error_message}")
-                return False, error_message
-            
-            # Wait for upload modal to disappear (indicates processing)
+            # Wait for upload modal to disappear (indicates processing started)
             modal_closed = False
             try:
                 modal_selectors = ['div[role="dialog"]', 'div[class*="uploadModal"]']
@@ -765,28 +759,35 @@ class DiscordAutomation:
             # Wait a bit more after modal closes
             time.sleep(1.5)
             
-            # Check for errors again (may appear after modal closes)
-            error_detected, error_message = self._check_send_errors()
-            if error_detected:
-                logger.error(f"❌ Discord error after send: {error_message}")
-                return False, error_message
-            
-            # Verify message appeared in chat
+            # IMPORTANT: First check if message appeared in chat
+            # If message is there, it's SUCCESS regardless of slowmode appearing after
             message_verified, verify_message = self._verify_message_sent()
             
-            if not message_verified:
-                # One more check for errors
-                error_detected, error_message = self._check_send_errors()
-                if error_detected:
-                    return False, error_message
-                
-                logger.warning(f"⚠️ Could not verify message delivery: {verify_message}")
-                # Don't fail completely - message might have sent but verification failed
-                logger.info("✅ Image upload completed (delivery unverified)")
-                return True, "Image sent (delivery verification inconclusive)"
+            if message_verified:
+                # Message found in chat = SUCCESS!
+                # Slowmode timer appearing AFTER send is normal, not an error
+                logger.info("✅ Image uploaded and verified in chat!")
+                return True, "Image sent and verified successfully"
             
-            logger.info("✅ Image uploaded and verified in chat!")
-            return True, "Image sent and verified successfully"
+            # Message not found - NOW check for errors that may have blocked sending
+            error_detected, error_message = self._check_send_errors()
+            
+            if error_detected:
+                # Check if this looks like a "post-send" slowmode (not blocking)
+                # If modal closed successfully, message likely sent before slowmode kicked in
+                if modal_closed and "slowmode" in error_message.lower():
+                    logger.info("Slowmode appeared after send - message likely delivered")
+                    logger.info("✅ Image upload completed (slowmode after send)")
+                    return True, "Image sent successfully (slowmode now active)"
+                
+                logger.error(f"❌ Discord error: {error_message}")
+                return False, error_message
+            
+            # No errors but couldn't verify message
+            logger.warning(f"⚠️ Could not verify message delivery: {verify_message}")
+            # Don't fail completely - message might have sent but verification failed
+            logger.info("✅ Image upload completed (delivery unverified)")
+            return True, "Image sent (delivery verification inconclusive)"
             
         except PlaywrightTimeout as e:
             logger.error(f"Timeout during image upload: {e}")
